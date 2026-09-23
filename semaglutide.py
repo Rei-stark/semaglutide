@@ -54,7 +54,7 @@ def get_authenticated_user():
     auth_code = st.query_params.get("code")
     if auth_code:
         try:
-            supabase.auth.exchange_code_for_session(auth_code)
+            supabase.auth.exchange_code_for_session({"auth_code": auth_code})
             st.query_params.clear()
         except Exception as error:
             if "code verifier" in str(error).lower():
