@@ -211,6 +211,27 @@ def gerar_grafico_doses(df_historico):
     return fig
 
 
+def gerar_grafico_adesao(df_historico):
+    dados = df_historico.copy()
+    dados['data_registo'] = pd.to_datetime(dados['data_registo'])
+    dados['semana'] = dados['data_registo'].dt.to_period('W-MON').apply(lambda periodo: periodo.start_time)
+    adesao = dados.groupby('semana').agg(
+        dias_registrados=('tomou_dose', 'size'),
+        dias_com_dose=('tomou_dose', 'sum'),
+    ).reset_index()
+    adesao['percentual'] = (adesao['dias_com_dose'] / adesao['dias_registrados']) * 100
+
+    fig, ax = plt.subplots(figsize=(10, 3.5))
+    ax.bar(adesao['semana'], adesao['percentual'], color='#9467bd', width=5)
+    ax.set_title("Adesão registrada por semana")
+    ax.set_ylabel("Dias com dose (%)")
+    ax.set_xlabel("Semana")
+    ax.set_ylim(0, 100)
+    ax.grid(axis='y', alpha=0.25)
+    fig.autofmt_xdate()
+    return fig, adesao
+
+
 def exibir_relatorio(df_historico):
     st.header("📄 Relatório do histórico")
     if df_historico.empty:
@@ -361,6 +382,12 @@ else:
             st.pyplot(gerar_grafico_doses(df), clear_figure=True)
         else:
             st.info("Ainda não há doses registradas para exibir neste gráfico.")
+
+        st.subheader("📊 Adesão registrada")
+        fig_adesao, dados_adesao = gerar_grafico_adesao(df)
+        st.pyplot(fig_adesao, clear_figure=True)
+        adesao_media = (dados_adesao['dias_com_dose'].sum() / dados_adesao['dias_registrados'].sum()) * 100
+        st.caption(f"Adesão média dos dias registrados: {adesao_media:.1f}%. Dias sem registro não entram no cálculo.")
 
         perda_30d = projecoes[30]['perda']
         if perda_30d > 15:
