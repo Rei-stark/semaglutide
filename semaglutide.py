@@ -210,6 +210,66 @@ def gerar_grafico_doses(df_historico):
     fig.autofmt_xdate()
     return fig
 
+
+def exibir_relatorio(df_historico):
+    st.header("📄 Relatório do histórico")
+    if df_historico.empty:
+        st.info("Ainda não há registros para o período selecionado.")
+        return
+
+    dados = df_historico.copy()
+    dados['data_registo'] = pd.to_datetime(dados['data_registo'])
+    data_minima = dados['data_registo'].min().date()
+    data_maxima = dados['data_registo'].max().date()
+
+    filtro = st.selectbox(
+        "Período do relatório",
+        ["Todos os registros", "Últimos 7 dias", "Últimos 30 dias", "Últimos 90 dias", "Período personalizado"],
+    )
+
+    if filtro == "Todos os registros":
+        dados_filtrados = dados
+    elif filtro == "Período personalizado":
+        col_inicio, col_fim = st.columns(2)
+        data_inicio = col_inicio.date_input("Data inicial", value=data_minima, min_value=data_minima, max_value=data_maxima)
+        data_fim = col_fim.date_input("Data final", value=data_maxima, min_value=data_minima, max_value=data_maxima)
+        dados_filtrados = dados[
+            (dados['data_registo'].dt.date >= data_inicio)
+            & (dados['data_registo'].dt.date <= data_fim)
+        ] if data_inicio <= data_fim else dados.iloc[0:0]
+    else:
+        dias = {"Últimos 7 dias": 7, "Últimos 30 dias": 30, "Últimos 90 dias": 90}[filtro]
+        data_inicio = max(data_minima, data_maxima - timedelta(days=dias - 1))
+        dados_filtrados = dados[dados['data_registo'].dt.date >= data_inicio]
+
+    if dados_filtrados.empty:
+        st.info("Não há registros no período selecionado.")
+        return
+
+    doses = dados_filtrados.loc[dados_filtrados['tomou_dose'], 'quantidade_dose'].sum()
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Registros", len(dados_filtrados))
+    col2.metric("Peso médio", f"{dados_filtrados['peso'].mean():.1f} kg")
+    col3.metric("Dose total", f"{doses:.2f} mg")
+
+    tabela = dados_filtrados[
+        ['data_registo', 'peso', 'tomou_dose', 'quantidade_dose']
+    ].rename(columns={
+        'data_registo': 'Data',
+        'peso': 'Peso (kg)',
+        'tomou_dose': 'Tomou dose',
+        'quantidade_dose': 'Dose (mg)',
+    })
+    tabela['Data'] = tabela['Data'].dt.strftime('%d/%m/%Y')
+    st.dataframe(tabela, use_container_width=True, hide_index=True)
+    st.download_button(
+        "Baixar relatório em CSV",
+        tabela.to_csv(index=False).encode('utf-8-sig'),
+        file_name="relatorio_semaglutida.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
 # --- 4. INTERFACE DO UTILIZADOR (FRONTEND) ---
 st.title("📉 Acompanhamento com IA - Semaglutida")
 
@@ -222,6 +282,7 @@ if not user:
 
 with st.sidebar:
     st.write(f"Conta: {user.email}")
+    menu = st.radio("Menu", ["Acompanhamento", "Relatório do histórico"])
     if st.button("Sair", use_container_width=True):
         supabase.auth.sign_out()
         st.session_state.pop("supabase_client", None)
@@ -251,17 +312,29 @@ else:
 
     df = obter_historico(perfil['id'])
 
+    if menu == "Relatório do histórico":
+        exibir_relatorio(df)
+        st.stop()
+
     # --- ZONA DE REGISTO DIÁRIO ---
     st.subheader("📝 Registrar peso")
-    with st.form("registo_diario"):
+    form_version = st.session_state.get("registro_form_version", 0)
+    with st.form(f"registro_diario_{form_version}"):
         col1, col2 = st.columns(2)
         data_input = col1.date_input("Data da medição", value=date.today())
         peso_input = col2.number_input("Peso (kg)", min_value=30.0, max_value=250.0, step=0.1, value=float(df['peso'].iloc[-1]) if not df.empty else perfil['peso_inicial'])
 
-        tomou_remedio = st.checkbox("Tomei a dose de semaglutida neste dia")
-        dose_input = st.selectbox("Dose aplicada (mg)", [0.25, 0.5, 1.0, 2.0, 2.4]) if tomou_remedio else 0.0
+        tomou_remedio = st.checkbox("Tomei a dose de semaglutida neste dia", key=f"tomou_remedio_{form_version}")
+        dose_input = st.selectbox("Dose aplicada (mg)", [0.25, 0.5, 1.0, 2.0, 2.4], key=f"dose_input_{form_version}") if tomou_remedio else 0.0
 
-        if st.form_submit_button("Salvar registro"):
+        col_salvar, col_cancelar = st.columns(2)
+        salvar = col_salvar.form_submit_button("Salvar registro")
+        cancelar = col_cancelar.form_submit_button("Cancelar")
+
+        if cancelar:
+            st.session_state.registro_form_version = form_version + 1
+            st.rerun()
+        if salvar:
             guardar_registo(perfil['id'], data_input, peso_input, tomou_remedio, dose_input)
             st.success("Registro salvo! A IA está recalculando sua curva...")
             st.rerun()
