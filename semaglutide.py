@@ -473,18 +473,24 @@ if not user:
     login_with_google()
     st.stop()
 
+perfil = obter_perfil(user.id)
+
 with st.sidebar:
     if LOGO_PATH.exists():
         st.image(str(LOGO_PATH), width=150)
-    st.write(f"Conta: {user.email}")
+    if perfil:
+        nascimento_formatado = pd.to_datetime(perfil['data_nascimento']).strftime('%d/%m/%Y')
+        st.markdown(f"**Nome:** {perfil['nome']}")
+        st.markdown(f"**Sexo:** {perfil['sexo']}")
+        st.markdown(f"**Data de nascimento:** {nascimento_formatado}")
+    else:
+        st.caption("Perfil ainda não preenchido")
     menu = st.radio("Menu", ["Acompanhamento", "Estatísticas", "Relatório do histórico"])
     st.caption("Desenvolvido por Reinaldo Galvão")
     if st.button("Sair", use_container_width=True):
         supabase.auth.sign_out()
         st.session_state.pop("supabase_client", None)
         st.rerun()
-
-perfil = obter_perfil(user.id)
 
 if not perfil:
     st.warning("Complete seu perfil para começar.")
