@@ -7,7 +7,10 @@ select
     u.email,
     r.data_registo,
     r.quantidade_dose,
-    2.4::numeric as nova_dose
+    case
+        when r.quantidade_dose = 2.5 then 0.25
+        when r.quantidade_dose = 5.0 then 0.5
+    end::numeric as nova_dose
 from public.registos_diarios r
 join public.utilizadores u on u.id = r.user_id
 where r.user_id in (
@@ -16,9 +19,12 @@ where r.user_id in (
 )
 and r.quantidade_dose in (2.5, 5.0);
 
--- 2,5 mg e 5 mg são normalizados para a dose máxima válida de 2,4 mg.
+-- Os valores antigos estavam 10x maiores que a dose real registrada.
 update public.registos_diarios
-set quantidade_dose = 2.4,
+set quantidade_dose = case
+    when quantidade_dose = 2.5 then 0.25
+    when quantidade_dose = 5.0 then 0.5
+end,
     tomou_dose = true
 where user_id in (
     '5a9eb68e-0f72-413c-bb0f-9e2e696eda6f'::uuid,
