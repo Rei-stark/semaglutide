@@ -447,19 +447,21 @@ def exibir_estatisticas(df_historico, peso_inicial):
     peso_atual = float(dados['peso'].iloc[-1])
     peso_minimo = float(dados['peso'].min())
     peso_maximo = float(dados['peso'].max())
+    peso_medio = float(dados['peso'].mean())
+    perda_periodo_kg = float(dados['peso'].iloc[0]) - peso_atual
     perda_periodo = ((float(dados['peso'].iloc[0]) - peso_atual) / float(dados['peso'].iloc[0])) * 100
     dias_com_dose = int(dados['tomou_dose'].sum())
-    adesao = (dias_com_dose / len(dados)) * 100
     dose_media = float(dados.loc[dados['tomou_dose'], 'quantidade_dose'].mean()) if dias_com_dose else 0.0
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Registros", len(dados))
     col2.metric("Peso atual", f"{peso_atual:.1f} kg")
     col3.metric("Perda no período", f"{perda_periodo:.1f}%")
+    col3.caption(f"{perda_periodo_kg:.1f} kg")
     col4, col5, col6 = st.columns(3)
-    col4.metric("Menor peso", f"{peso_minimo:.1f} kg")
-    col5.metric("Maior peso", f"{peso_maximo:.1f} kg")
-    col6.metric("Adesão registrada", f"{adesao:.1f}%")
+    col4.metric("Média do período", f"{peso_medio:.1f} kg")
+    col5.metric("Menor peso", f"{peso_minimo:.1f} kg")
+    col6.metric("Maior peso", f"{peso_maximo:.1f} kg")
     st.caption(f"Dose média nos dias registrados: {dose_media:.2f} mg. Peso inicial do perfil: {peso_inicial:.1f} kg.")
 
     st.subheader("Evolução do peso no período")
@@ -610,9 +612,13 @@ else:
         st.caption(f"Erro médio histórico — Ridge: {erros['ridge']:.3f} kg | SVR: {erros['svr']:.3f} kg")
         col_met1, col_met2, col_met3, col_met4 = st.columns(4)
         col_met1.metric("Perda atual", f"{perda_atual:.1f}%", help=f"Peso atual: {peso_atual:.1f} kg")
+        col_met1.caption(f"{perfil['peso_inicial'] - peso_atual:.1f} kg")
         col_met2.metric("Previsão em 10 dias", f"{projecoes[10]['perda']:.1f}%", help=f"Peso projetado: {projecoes[10]['peso']:.1f} kg")
+        col_met2.caption(f"{perfil['peso_inicial'] - projecoes[10]['peso']:.1f} kg")
         col_met3.metric("Previsão em 20 dias", f"{projecoes[20]['perda']:.1f}%", help=f"Peso projetado: {projecoes[20]['peso']:.1f} kg")
+        col_met3.caption(f"{perfil['peso_inicial'] - projecoes[20]['peso']:.1f} kg")
         col_met4.metric("Previsão em 30 dias", f"{projecoes[30]['perda']:.1f}%", help=f"Peso projetado: {projecoes[30]['peso']:.1f} kg")
+        col_met4.caption(f"{perfil['peso_inicial'] - projecoes[30]['peso']:.1f} kg")
 
         st.subheader("💉 Histórico de doses")
         df_doses = df[df['tomou_dose'] & (df['quantidade_dose'] > 0)]
