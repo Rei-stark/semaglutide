@@ -47,7 +47,16 @@ def login_with_google():
     credentials = {"provider": "google"}
     if APP_URL:
         credentials["options"] = {"redirect_to": APP_URL}
-    response = supabase.auth.sign_in_with_oauth(credentials)
+    try:
+        response = supabase.auth.sign_in_with_oauth(credentials)
+    except Exception as error:
+        if "provider is not enabled" in str(error).lower():
+            st.error(
+                "O login Google ainda não está ativado no Supabase. "
+                "Ative Authentication > Providers > Google e configure as credenciais OAuth."
+            )
+            st.stop()
+        raise
     st.link_button("Entrar com Google", response.url, use_container_width=True)
 
 # --- 2. FUNÇÕES DE BASE DE DADOS ---
