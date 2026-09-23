@@ -316,10 +316,11 @@ def gerar_pdf_historico(df_historico, titulo, perfil=None, tipo='historico', pes
         figura.savefig(imagem, format='png', dpi=150, bbox_inches='tight')
         imagem.seek(0)
         pagina, eixo = plt.subplots(figsize=(11.69, 8.27))
-        eixo.imshow(plt.imread(imagem))
+        eixo.set_position([0.06, 0.10, 0.88, 0.80])
+        eixo.imshow(plt.imread(imagem), aspect='auto')
         eixo.axis('off')
         adicionar_marca(pagina)
-        pdf.savefig(pagina, bbox_inches='tight')
+        pdf.savefig(pagina)
         plt.close(pagina)
         plt.close(figura)
 
@@ -338,14 +339,15 @@ def gerar_pdf_historico(df_historico, titulo, perfil=None, tipo='historico', pes
             ax.text(0.03, 0.60, f'Sexo: {perfil["sexo"]}', fontsize=11)
             ax.text(0.03, 0.56, f'Data de nascimento: {nascimento}', fontsize=11)
         adicionar_marca(fig)
-        pdf.savefig(fig, bbox_inches='tight')
+        pdf.savefig(fig)
         plt.close(fig)
 
         if tipo == 'acompanhamento' and len(dados) > 3:
             figura, _, _, _, _ = gerar_predicao_ml(dados, peso_inicial)
             salvar_grafico_a4(pdf, figura)
         elif tipo == 'estatisticas':
-            fig, ax = plt.subplots(figsize=(11.69, 6.5))
+            fig, ax = plt.subplots(figsize=(11.69, 8.27))
+            fig.subplots_adjust(left=0.10, right=0.95, top=0.88, bottom=0.16)
             ax.plot(dados['data_registo'], dados['peso'], marker='o', color='#1f77b4', label='Peso registrado')
             if len(dados) >= 3:
                 ax.plot(dados['data_registo'], dados['peso'].rolling(3, min_periods=1).mean(), color='#ff7f0e', linewidth=2, label='Média móvel (3 registros)')
@@ -376,7 +378,7 @@ def gerar_pdf_historico(df_historico, titulo, perfil=None, tipo='historico', pes
                 tabela_pdf.set_fontsize(10)
                 tabela_pdf.scale(1, 1.6)
                 adicionar_marca(fig)
-                pdf.savefig(fig, bbox_inches='tight')
+                pdf.savefig(fig)
                 plt.close(fig)
 
     return arquivo.getvalue()
