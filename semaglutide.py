@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from io import BytesIO
+from matplotlib.backends.backend_pdf import PdfPages
 from supabase import create_client
 from supabase.lib.client_options import SyncClientOptions
 from sklearn.linear_model import Ridge
@@ -312,6 +314,57 @@ def filtrar_historico(df_historico, chave="periodo_relatorio"):
     return dados[dados['data_registo'].dt.date >= data_inicio]
 
 
+def gerar_pdf_historico(df_historico, titulo):
+    dados = df_historico.copy()
+    dados['data_registo'] = pd.to_datetime(dados['data_registo'])
+    tabela = dados[['data_registo', 'peso', 'tomou_dose', 'quantidade_dose']].copy()
+    tabela.columns = ['Data', 'Peso (kg)', 'Tomou dose', 'Dose (mg)']
+    tabela['Data'] = tabela['Data'].dt.strftime('%d/%m/%Y')
+    tabela['Peso (kg)'] = tabela['Peso (kg)'].map(lambda valor: f'{valor:.1f}')
+    tabela['Dose (mg)'] = tabela['Dose (mg)'].map(lambda valor: f'{valor:.2f}')
+
+    arquivo = BytesIO()
+    with PdfPages(arquivo) as pdf:
+        fig, ax = plt.subplots(figsize=(11.69, 8.27))
+        ax.axis('off')
+        ax.text(0.03, 0.92, titulo, fontsize=20, fontweight='bold')
+        ax.text(0.03, 0.87, f'Gerado em {date.today().strftime("%d/%m/%Y")}', fontsize=10)
+        ax.text(0.03, 0.80, f'Registros: {len(dados)}', fontsize=12)
+        ax.text(0.03, 0.76, f'Peso médio: {dados["peso"].mean():.1f} kg', fontsize=12)
+        ax.text(0.03, 0.72, f'Dose total: {dados.loc[dados["tomou_dose"], "quantidade_dose"].sum():.2f} mg', fontsize=12)
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
+
+        for inicio in range(0, len(tabela), 25):
+            pagina = tabela.iloc[inicio:inicio + 25]
+            fig, ax = plt.subplots(figsize=(11.69, 8.27))
+            ax.axis('off')
+            tabela_pdf = ax.table(
+                cellText=pagina.values,
+                colLabels=pagina.columns,
+                loc='center',
+                cellLoc='center',
+            )
+            tabela_pdf.auto_set_font_size(False)
+            tabela_pdf.set_fontsize(10)
+            tabela_pdf.scale(1, 1.6)
+            pdf.savefig(fig, bbox_inches='tight')
+            plt.close(fig)
+
+    return arquivo.getvalue()
+
+
+def exibir_download_pdf(df_historico, titulo):
+    if not df_historico.empty:
+        st.download_button(
+            "Baixar relatório em PDF",
+            gerar_pdf_historico(df_historico, titulo),
+            file_name="relatorio_semaglutida.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
+
+
 def exibir_relatorio(df_historico):
     st.header("📄 Relatório do histórico")
     if df_historico.empty:
@@ -347,6 +400,7 @@ def exibir_relatorio(df_historico):
         mime="text/csv",
         use_container_width=True,
     )
+    exibir_download_pdf(dados_filtrados, "Relatório do histórico de semaglutida")
 
 
 def exibir_estatisticas(df_historico, peso_inicial):
@@ -396,6 +450,7 @@ def exibir_estatisticas(df_historico, peso_inicial):
         st.info("Não há doses registradas no período selecionado.")
     else:
         st.pyplot(gerar_grafico_doses(dados), clear_figure=True)
+    exibir_download_pdf(dados, "Estatísticas do tratamento com semaglutida")
 
 # --- 4. INTERFACE DO UTILIZADOR (FRONTEND) ---
 st.title("📉 Acompanhamento com IA - Semaglutida")
@@ -410,6 +465,7 @@ if not user:
 with st.sidebar:
     st.write(f"Conta: {user.email}")
     menu = st.radio("Menu", ["Acompanhamento", "Estatísticas", "Relatório do histórico"])
+    st.caption("Desenvolvido por Image Tech")
     if st.button("Sair", use_container_width=True):
         supabase.auth.sign_out()
         st.session_state.pop("supabase_client", None)
@@ -537,3 +593,7 @@ else:
             st.warning("🟠 Ritmo projetado lento (abaixo da referência clínica)")
     else:
         st.info("Continue registrando seu peso por mais alguns dias para a IA calcular uma curva personalizada.")
+
+    st.divider()
+    st.caption("Relatório completo")
+    exibir_download_pdf(df, "Acompanhamento de semaglutida")
