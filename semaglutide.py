@@ -7,6 +7,9 @@ from supabase.lib.client_options import SyncClientOptions
 from sklearn.linear_model import Ridge
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVR
+from sklearn.metrics import mean_absolute_error
 from datetime import date, timedelta
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
@@ -163,9 +166,13 @@ def gerar_predicao_ml(df_historico, peso_inicial):
     X = df_historico[['Dias_Tratamento']]
     y = df_historico['peso']
     
-    # Utilizando o modelo Ridge que validámos (evita overfitting)
-    modelo = make_pipeline(PolynomialFeatures(degree=2), Ridge(alpha=10.0))
-    modelo.fit(X, y)
+    modelo_ridge = make_pipeline(PolynomialFeatures(degree=2), Ridge(alpha=10.0))
+    modelo_svr = make_pipeline(
+        StandardScaler(),
+        SVR(kernel='rbf', C=10.0, gamma='scale', epsilon=0.1),
+    )
+    modelo_ridge.fit(X, y)
+    modelo_svr.fit(X, y)
     
     ultimo_dia = df_historico['Dias_Tratamento'].max()
     dias_alvo = np.array([10, 20, 30])
@@ -173,29 +180,58 @@ def gerar_predicao_ml(df_historico, peso_inicial):
     datas_grafico = df_historico['data_registo'].max() + pd.to_timedelta(
         np.arange(1, 31), unit='D'
     )
-    predicoes_grafico = modelo.predict(pd.DataFrame({'Dias_Tratamento': dias_grafico}))
-    predicoes = modelo.predict(pd.DataFrame({'Dias_Tratamento': ultimo_dia + dias_alvo}))
+    dias_grafico_df = pd.DataFrame({'Dias_Tratamento': dias_grafico})
+    dias_alvo_df = pd.DataFrame({'Dias_Tratamento': ultimo_dia + dias_alvo})
+    predicoes_ridge_grafico = modelo_ridge.predict(dias_grafico_df)
+    predicoes_svr_grafico = modelo_svr.predict(dias_grafico_df)
+    predicoes_ridge = modelo_ridge.predict(dias_alvo_df)
+    predicoes_svr = modelo_svr.predict(dias_alvo_df)
     peso_atual = float(df_historico['peso'].iloc[-1])
     perda_atual = ((peso_inicial - peso_atual) / peso_inicial) * 100
     projecoes = {
         int(dias): {
-            'peso': float(peso),
-            'perda': float(((peso_inicial - peso) / peso_inicial) * 100),
+            'peso': float(peso_ridge),
+            'perda': float(((peso_inicial - peso_ridge) / peso_inicial) * 100),
+            'peso_svr': float(peso_svr),
+            'perda_svr': float(((peso_inicial - peso_svr) / peso_inicial) * 100),
         }
-        for dias, peso in zip(dias_alvo, predicoes)
+        for dias, peso_ridge, peso_svr in zip(dias_alvo, predicoes_ridge, predicoes_svr)
     }
     
     # Geração do Gráfico
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.scatter(df_historico['data_registo'], y, color='#1f77b4', label='Peso real', zorder=5)
-    ax.plot(df_historico['data_registo'], modelo.predict(X), color='gray', linestyle='--', alpha=0.6, label='Tendência ajustada')
-    ax.plot(datas_grafico, predicoes_grafico, color='#d62728', linestyle='-', linewidth=2, label='Projeção contínua')
+    ax.scatter(df_historico['data_registo'], y, color='black', label='Peso real', zorder=5)
+    ax.plot(
+        df_historico['data_registo'],
+        modelo_ridge.predict(X),
+        color='blue',
+        linestyle='--',
+        alpha=0.8,
+        label='Ridge Polynomial',
+    )
+    ax.plot(
+        df_historico['data_registo'],
+        modelo_svr.predict(X),
+        color='green',
+        linestyle='--',
+        alpha=0.8,
+        label='SVR (RBF)',
+    )
+    ax.plot(datas_grafico, predicoes_ridge_grafico, color='blue', linestyle='--', linewidth=2)
+    ax.plot(datas_grafico, predicoes_svr_grafico, color='green', linestyle='--', linewidth=2)
     ax.scatter(
         df_historico['data_registo'].max() + pd.to_timedelta(dias_alvo, unit='D'),
-        predicoes,
-        color='#d62728',
+        predicoes_ridge,
+        color='blue',
         zorder=5,
-        label='Pontos de 10, 20 e 30 dias',
+        label='Ridge: pontos de 10, 20 e 30 dias',
+    )
+    ax.scatter(
+        df_historico['data_registo'].max() + pd.to_timedelta(dias_alvo, unit='D'),
+        predicoes_svr,
+        color='green',
+        zorder=5,
+        label='SVR: pontos de 10, 20 e 30 dias',
     )
     
     ax.set_title("Evolução e projeção do peso")
@@ -203,7 +239,11 @@ def gerar_predicao_ml(df_historico, peso_inicial):
     ax.legend()
     ax.grid(True, alpha=0.3)
     
-    return fig, peso_atual, perda_atual, projecoes
+    erros = {
+        'ridge': mean_absolute_error(y, modelo_ridge.predict(X)),
+        'svr': mean_absolute_error(y, modelo_svr.predict(X)),
+    }
+    return fig, peso_atual, perda_atual, projecoes, erros
 
 
 def gerar_grafico_doses(df_historico):
@@ -463,11 +503,12 @@ else:
     st.subheader("🧠 Análise preditiva e histórico")
 
     if len(df) > 3:
-        fig, peso_atual, perda_atual, projecoes = gerar_predicao_ml(df, perfil['peso_inicial'])
+        fig, peso_atual, perda_atual, projecoes, erros = gerar_predicao_ml(df, perfil['peso_inicial'])
         st.pyplot(fig)
 
         st.caption("Percentuais calculados em relação ao peso inicial informado no perfil.")
         st.caption("As projeções são estatísticas e não substituem orientação médica.")
+        st.caption(f"Erro médio histórico — Ridge: {erros['ridge']:.3f} kg | SVR: {erros['svr']:.3f} kg")
         col_met1, col_met2, col_met3, col_met4 = st.columns(4)
         col_met1.metric("Perda atual", f"{perda_atual:.1f}%", help=f"Peso atual: {peso_atual:.1f} kg")
         col_met2.metric("Previsão em 10 dias", f"{projecoes[10]['perda']:.1f}%", help=f"Peso projetado: {projecoes[10]['peso']:.1f} kg")
