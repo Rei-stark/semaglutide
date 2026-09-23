@@ -316,7 +316,7 @@ def filtrar_historico(df_historico, chave="periodo_relatorio"):
     return dados[dados['data_registo'].dt.date >= data_inicio]
 
 
-def gerar_pdf_historico(df_historico, titulo, perfil=None):
+def gerar_pdf_historico(df_historico, titulo, perfil=None, tipo='historico', peso_inicial=None):
     dados = df_historico.copy()
     dados['data_registo'] = pd.to_datetime(dados['data_registo'])
     tabela = dados[['data_registo', 'peso', 'tomou_dose', 'quantidade_dose']].copy()
@@ -350,39 +350,65 @@ def gerar_pdf_historico(df_historico, titulo, perfil=None):
         pdf.savefig(fig, bbox_inches='tight')
         plt.close(fig)
 
-        for inicio in range(0, len(tabela), 25):
-            pagina = tabela.iloc[inicio:inicio + 25]
-            fig, ax = plt.subplots(figsize=(11.69, 8.27))
-            ax.axis('off')
-            tabela_pdf = ax.table(
-                cellText=pagina.values,
-                colLabels=pagina.columns,
-                loc='center',
-                cellLoc='center',
-            )
-            tabela_pdf.auto_set_font_size(False)
-            tabela_pdf.set_fontsize(10)
-            tabela_pdf.scale(1, 1.6)
+        if tipo == 'acompanhamento' and len(dados) > 3:
+            figura, _, _, _, _ = gerar_predicao_ml(dados, peso_inicial)
+            pdf.savefig(figura, bbox_inches='tight')
+            plt.close(figura)
+        elif tipo == 'estatisticas':
+            fig, ax = plt.subplots(figsize=(11.69, 6.5))
+            ax.plot(dados['data_registo'], dados['peso'], marker='o', color='#1f77b4', label='Peso registrado')
+            if len(dados) >= 3:
+                ax.plot(dados['data_registo'], dados['peso'].rolling(3, min_periods=1).mean(), color='#ff7f0e', linewidth=2, label='Média móvel (3 registros)')
+            ax.set_title('Evolução do peso no período')
+            ax.set_ylabel('Peso (kg)')
+            ax.set_xlabel('Data')
+            ax.grid(True, alpha=0.25)
+            ax.legend()
+            fig.autofmt_xdate()
             adicionar_marca(fig)
             pdf.savefig(fig, bbox_inches='tight')
             plt.close(fig)
 
+            dados_doses = dados[dados['tomou_dose'] & (dados['quantidade_dose'] > 0)]
+            if not dados_doses.empty:
+                figura_doses = gerar_grafico_doses(dados)
+                adicionar_marca(figura_doses)
+                pdf.savefig(figura_doses, bbox_inches='tight')
+                plt.close(figura_doses)
+        else:
+            for inicio in range(0, len(tabela), 25):
+                pagina = tabela.iloc[inicio:inicio + 25]
+                fig, ax = plt.subplots(figsize=(11.69, 8.27))
+                ax.axis('off')
+                tabela_pdf = ax.table(
+                    cellText=pagina.values,
+                    colLabels=pagina.columns,
+                    loc='center',
+                    cellLoc='center',
+                )
+                tabela_pdf.auto_set_font_size(False)
+                tabela_pdf.set_fontsize(10)
+                tabela_pdf.scale(1, 1.6)
+                adicionar_marca(fig)
+                pdf.savefig(fig, bbox_inches='tight')
+                plt.close(fig)
+
     return arquivo.getvalue()
 
 
-def exibir_download_pdf(df_historico, titulo, perfil):
+def exibir_download_pdf(df_historico, titulo, perfil, tipo='historico', peso_inicial=None):
     if not df_historico.empty:
         st.download_button(
             "Baixar relatório em PDF",
-            gerar_pdf_historico(df_historico, titulo, perfil),
+            gerar_pdf_historico(df_historico, titulo, perfil, tipo, peso_inicial),
             file_name="relatorio_semaglutida.pdf",
             mime="application/pdf",
             use_container_width=True,
         )
 
 
-def exibir_relatorio(df_historico):
-    st.header("📄 Relatório do histórico")
+def exibir_relatorio(df_historico, perfil):
+    st.header("📄 Histórico")
     if df_historico.empty:
         st.info("Ainda não há registros para o período selecionado.")
         return
@@ -416,7 +442,7 @@ def exibir_relatorio(df_historico):
         mime="text/csv",
         use_container_width=True,
     )
-    exibir_download_pdf(dados_filtrados, "Relatório do histórico de semaglutida", perfil)
+    exibir_download_pdf(dados_filtrados, "Histórico de semaglutida", perfil, tipo='historico')
 
 
 def exibir_estatisticas(df_historico, peso_inicial):
@@ -466,7 +492,7 @@ def exibir_estatisticas(df_historico, peso_inicial):
         st.info("Não há doses registradas no período selecionado.")
     else:
         st.pyplot(gerar_grafico_doses(dados), clear_figure=True)
-    exibir_download_pdf(dados, "Estatísticas do tratamento com semaglutida", perfil)
+    exibir_download_pdf(dados, "Estatísticas do tratamento com semaglutida", perfil, tipo='estatisticas', peso_inicial=peso_inicial)
 
 # --- 4. INTERFACE DO UTILIZADOR (FRONTEND) ---
 st.title("📉 Acompanhamento com IA - Semaglutida")
@@ -490,7 +516,7 @@ with st.sidebar:
         st.markdown(f"**Data de nascimento:** {nascimento_formatado}")
     else:
         st.caption("Perfil ainda não preenchido")
-    menu = st.radio("Menu", ["Acompanhamento", "Estatísticas", "Relatório do histórico"])
+    menu = st.radio("Menu", ["Acompanhamento", "Estatísticas", "Histórico"])
     st.caption("Desenvolvido por Reinaldo Galvão")
     if st.button("Sair", use_container_width=True):
         supabase.auth.sign_out()
@@ -519,8 +545,8 @@ else:
 
     df = obter_historico(perfil['id'])
 
-    if menu == "Relatório do histórico":
-        exibir_relatorio(df)
+    if menu == "Histórico":
+        exibir_relatorio(df, perfil)
         st.stop()
     if menu == "Estatísticas":
         exibir_estatisticas(df, perfil['peso_inicial'])
@@ -620,4 +646,4 @@ else:
 
     st.divider()
     st.caption("Relatório completo")
-    exibir_download_pdf(df, "Acompanhamento de semaglutida", perfil)
+    exibir_download_pdf(df, "Acompanhamento de semaglutida", perfil, tipo='acompanhamento', peso_inicial=perfil['peso_inicial'])
