@@ -13,6 +13,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVR
 from sklearn.metrics import mean_absolute_error
 from datetime import date, timedelta
+from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 st.set_page_config(page_title="Acompanhamento de Semaglutida", page_icon="📉", layout="centered")
@@ -27,6 +28,7 @@ except KeyError as error:
     ) from error
 
 APP_URL = st.secrets.get("APP_URL", "").strip()
+LOGO_PATH = Path(__file__).with_name("LOGO-IMAGE-2026.png")
 
 
 class StreamlitAuthStorage:
@@ -463,6 +465,8 @@ if not user:
     st.stop()
 
 with st.sidebar:
+    if LOGO_PATH.exists():
+        st.image(str(LOGO_PATH), width=150)
     st.write(f"Conta: {user.email}")
     menu = st.radio("Menu", ["Acompanhamento", "Estatísticas", "Relatório do histórico"])
     st.caption("Desenvolvido por Image Tech")
