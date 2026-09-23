@@ -121,7 +121,15 @@ def login_with_google():
 
 # --- 2. FUNÇÕES DE BASE DE DADOS ---
 def obter_perfil(user_id):
-    resposta = supabase.table('utilizadores').select('*').eq('id', user_id).execute()
+    try:
+        resposta = supabase.table('utilizadores').select('*').eq('id', user_id).execute()
+    except Exception:
+        st.error("Não foi possível consultar o perfil no Supabase.")
+        st.info(
+            "No SQL Editor do Supabase, confirme que a tabela public.utilizadores "
+            "existe e execute database/migrate_google_auth.sql."
+        )
+        st.stop()
     return resposta.data[0] if resposta.data else None
 
 def obter_historico(user_id):
