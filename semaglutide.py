@@ -169,9 +169,12 @@ def gerar_predicao_ml(df_historico, peso_inicial):
     
     ultimo_dia = df_historico['Dias_Tratamento'].max()
     dias_alvo = np.array([10, 20, 30])
-    dias_futuros = pd.DataFrame({'Dias_Tratamento': ultimo_dia + dias_alvo})
-    datas_futuras = df_historico['data_registo'].max() + pd.to_timedelta(dias_alvo, unit='D')
-    predicoes = modelo.predict(dias_futuros)
+    dias_grafico = np.arange(ultimo_dia + 1, ultimo_dia + 31)
+    datas_grafico = df_historico['data_registo'].max() + pd.to_timedelta(
+        np.arange(1, 31), unit='D'
+    )
+    predicoes_grafico = modelo.predict(pd.DataFrame({'Dias_Tratamento': dias_grafico}))
+    predicoes = modelo.predict(pd.DataFrame({'Dias_Tratamento': ultimo_dia + dias_alvo}))
     peso_atual = float(df_historico['peso'].iloc[-1])
     perda_atual = ((peso_inicial - peso_atual) / peso_inicial) * 100
     projecoes = {
@@ -186,7 +189,14 @@ def gerar_predicao_ml(df_historico, peso_inicial):
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.scatter(df_historico['data_registo'], y, color='#1f77b4', label='Peso real', zorder=5)
     ax.plot(df_historico['data_registo'], modelo.predict(X), color='gray', linestyle='--', alpha=0.6, label='Tendência ajustada')
-    ax.plot(datas_futuras, predicoes, color='#d62728', linestyle='-', linewidth=2, marker='o', label='Projeções')
+    ax.plot(datas_grafico, predicoes_grafico, color='#d62728', linestyle='-', linewidth=2, label='Projeção contínua')
+    ax.scatter(
+        df_historico['data_registo'].max() + pd.to_timedelta(dias_alvo, unit='D'),
+        predicoes,
+        color='#d62728',
+        zorder=5,
+        label='Pontos de 10, 20 e 30 dias',
+    )
     
     ax.set_title("Evolução e projeção do peso")
     ax.set_ylabel("Peso (kg)")
@@ -418,6 +428,35 @@ else:
             guardar_registo(perfil['id'], data_input, peso_input, tomou_remedio, dose_input)
             st.success("Registro salvo! A IA está recalculando sua curva...")
             st.rerun()
+
+    if not df.empty:
+        with st.expander("Ajustar registro existente"):
+            datas_registradas = pd.to_datetime(df['data_registo']).dt.date.tolist()[::-1]
+            data_ajuste = st.selectbox("Selecione a data para ajustar", datas_registradas)
+            registro = df[pd.to_datetime(df['data_registo']).dt.date == data_ajuste].iloc[0]
+            with st.form("ajuste_registro"):
+                peso_ajuste = st.number_input(
+                    "Peso registrado (kg)",
+                    min_value=30.0,
+                    max_value=250.0,
+                    step=0.1,
+                    value=float(registro['peso']),
+                )
+                tomou_ajuste = st.checkbox(
+                    "Tomei a dose neste dia",
+                    value=bool(registro['tomou_dose']),
+                )
+                dose_ajuste = st.selectbox(
+                    "Dose aplicada (mg)",
+                    [0.25, 0.5, 1.0, 2.0, 2.4],
+                    index=[0.25, 0.5, 1.0, 2.0, 2.4].index(float(registro['quantidade_dose']))
+                    if float(registro['quantidade_dose']) in [0.25, 0.5, 1.0, 2.0, 2.4]
+                    else 0,
+                ) if tomou_ajuste else 0.0
+                if st.form_submit_button("Salvar ajuste"):
+                    guardar_registo(perfil['id'], data_ajuste, peso_ajuste, tomou_ajuste, dose_ajuste)
+                    st.success("Registro atualizado.")
+                    st.rerun()
 
     # --- ZONA DA INTELIGÊNCIA ARTIFICIAL ---
     st.divider()
