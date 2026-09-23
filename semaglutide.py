@@ -265,27 +265,6 @@ def gerar_grafico_doses(df_historico):
     return fig
 
 
-def gerar_grafico_adesao(df_historico):
-    dados = df_historico.copy()
-    dados['data_registo'] = pd.to_datetime(dados['data_registo'])
-    dados['semana'] = dados['data_registo'].dt.to_period('W-MON').apply(lambda periodo: periodo.start_time)
-    adesao = dados.groupby('semana').agg(
-        dias_registrados=('tomou_dose', 'size'),
-        dias_com_dose=('tomou_dose', 'sum'),
-    ).reset_index()
-    adesao['percentual'] = (adesao['dias_com_dose'] / adesao['dias_registrados']) * 100
-
-    fig, ax = plt.subplots(figsize=(10, 3.5))
-    ax.bar(adesao['semana'], adesao['percentual'], color='#9467bd', width=5)
-    ax.set_title("Adesão registrada por semana")
-    ax.set_ylabel("Dias com dose (%)")
-    ax.set_xlabel("Semana")
-    ax.set_ylim(0, 100)
-    ax.grid(axis='y', alpha=0.25)
-    fig.autofmt_xdate()
-    return fig, adesao
-
-
 def filtrar_historico(df_historico, chave="periodo_relatorio"):
     if df_historico.empty:
         return df_historico
@@ -332,6 +311,18 @@ def gerar_pdf_historico(df_historico, titulo, perfil=None, tipo='historico', pes
             logo_ax.axis('off')
         fig.text(0.13, 0.035, 'Desenvolvido por Reinaldo Galvão', fontsize=8, color='#555555')
 
+    def salvar_grafico_a4(pdf, figura):
+        imagem = BytesIO()
+        figura.savefig(imagem, format='png', dpi=150, bbox_inches='tight')
+        imagem.seek(0)
+        pagina, eixo = plt.subplots(figsize=(11.69, 8.27))
+        eixo.imshow(plt.imread(imagem))
+        eixo.axis('off')
+        adicionar_marca(pagina)
+        pdf.savefig(pagina, bbox_inches='tight')
+        plt.close(pagina)
+        plt.close(figura)
+
     arquivo = BytesIO()
     with PdfPages(arquivo) as pdf:
         fig, ax = plt.subplots(figsize=(11.69, 8.27))
@@ -352,8 +343,7 @@ def gerar_pdf_historico(df_historico, titulo, perfil=None, tipo='historico', pes
 
         if tipo == 'acompanhamento' and len(dados) > 3:
             figura, _, _, _, _ = gerar_predicao_ml(dados, peso_inicial)
-            pdf.savefig(figura, bbox_inches='tight')
-            plt.close(figura)
+            salvar_grafico_a4(pdf, figura)
         elif tipo == 'estatisticas':
             fig, ax = plt.subplots(figsize=(11.69, 6.5))
             ax.plot(dados['data_registo'], dados['peso'], marker='o', color='#1f77b4', label='Peso registrado')
@@ -365,16 +355,12 @@ def gerar_pdf_historico(df_historico, titulo, perfil=None, tipo='historico', pes
             ax.grid(True, alpha=0.25)
             ax.legend()
             fig.autofmt_xdate()
-            adicionar_marca(fig)
-            pdf.savefig(fig, bbox_inches='tight')
-            plt.close(fig)
+            salvar_grafico_a4(pdf, fig)
 
             dados_doses = dados[dados['tomou_dose'] & (dados['quantidade_dose'] > 0)]
             if not dados_doses.empty:
                 figura_doses = gerar_grafico_doses(dados)
-                adicionar_marca(figura_doses)
-                pdf.savefig(figura_doses, bbox_inches='tight')
-                plt.close(figura_doses)
+                salvar_grafico_a4(pdf, figura_doses)
         else:
             for inicio in range(0, len(tabela), 25):
                 pagina = tabela.iloc[inicio:inicio + 25]
@@ -627,12 +613,6 @@ else:
             st.pyplot(gerar_grafico_doses(df), clear_figure=True)
         else:
             st.info("Ainda não há doses registradas para exibir neste gráfico.")
-
-        st.subheader("📊 Adesão registrada")
-        fig_adesao, dados_adesao = gerar_grafico_adesao(df)
-        st.pyplot(fig_adesao, clear_figure=True)
-        adesao_media = (dados_adesao['dias_com_dose'].sum() / dados_adesao['dias_registrados'].sum()) * 100
-        st.caption(f"Adesão média dos dias registrados: {adesao_media:.1f}%. Dias sem registro não entram no cálculo.")
 
         perda_30d = projecoes[30]['perda']
         if perda_30d > 15:
