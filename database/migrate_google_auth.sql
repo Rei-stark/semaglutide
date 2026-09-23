@@ -105,6 +105,10 @@ $$;
 alter table public.utilizadores enable row level security;
 alter table public.registos_diarios enable row level security;
 
+grant usage on schema public to authenticated;
+grant select, insert, update on public.utilizadores to authenticated;
+grant select, insert, update, delete on public.registos_diarios to authenticated;
+
 drop policy if exists "demo leitura utilizadores" on public.utilizadores;
 drop policy if exists "demo criação utilizadores" on public.utilizadores;
 drop policy if exists "demo leitura registos" on public.registos_diarios;

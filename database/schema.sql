@@ -22,6 +22,10 @@ create table if not exists public.registos_diarios (
 create index if not exists registos_diarios_user_data_idx
     on public.registos_diarios (user_id, data_registo);
 
+grant usage on schema public to authenticated;
+grant select, insert, update on public.utilizadores to authenticated;
+grant select, insert, update, delete on public.registos_diarios to authenticated;
+
 alter table public.utilizadores enable row level security;
 alter table public.registos_diarios enable row level security;
 
