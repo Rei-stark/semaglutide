@@ -545,11 +545,16 @@ else:
     form_version = st.session_state.get("registro_form_version", 0)
     with st.form(f"registro_diario_{form_version}"):
         col1, col2 = st.columns(2)
-        data_input = col1.date_input("Data da medição", value=date.today())
-        peso_input = col2.number_input("Peso (kg)", min_value=30.0, max_value=250.0, step=0.1, value=float(df['peso'].iloc[-1]) if not df.empty else perfil['peso_inicial'])
+        data_input = col1.date_input("Data da medição", value=date.today(), key=f"data_registro_{form_version}")
+        registro_do_dia = df[pd.to_datetime(df['data_registo']).dt.date == data_input] if not df.empty else df
+        peso_padrao = float(registro_do_dia['peso'].iloc[0]) if not registro_do_dia.empty else (float(df['peso'].iloc[-1]) if not df.empty else perfil['peso_inicial'])
+        tomou_padrao = bool(registro_do_dia['tomou_dose'].iloc[0]) if not registro_do_dia.empty else False
+        dose_padrao = float(registro_do_dia['quantidade_dose'].iloc[0]) if not registro_do_dia.empty else 0.25
+        opcoes_dose = [0.25, 0.5, 1.0, 2.0, 2.4]
+        peso_input = col2.number_input("Peso (kg)", min_value=30.0, max_value=250.0, step=0.1, value=peso_padrao, key=f"peso_input_{form_version}_{data_input}")
 
-        tomou_remedio = st.checkbox("Tomei a dose de semaglutida neste dia", key=f"tomou_remedio_{form_version}")
-        dose_input = st.selectbox("Dose aplicada (mg)", [0.25, 0.5, 1.0, 2.0, 2.4], key=f"dose_input_{form_version}") if tomou_remedio else 0.0
+        tomou_remedio = st.checkbox("Tomei a dose de semaglutida neste dia", value=tomou_padrao, key=f"tomou_remedio_{form_version}_{data_input}")
+        dose_input = st.selectbox("Dose aplicada (mg)", opcoes_dose, index=opcoes_dose.index(dose_padrao) if dose_padrao in opcoes_dose else 0, key=f"dose_input_{form_version}_{data_input}") if tomou_remedio else 0.0
 
         col_salvar, col_cancelar = st.columns(2)
         salvar = col_salvar.form_submit_button("Salvar registro")
