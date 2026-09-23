@@ -10,7 +10,7 @@ from sklearn.pipeline import make_pipeline
 from datetime import date, timedelta
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
-st.set_page_config(page_title="Predição Semaglutida", page_icon="📉", layout="centered")
+st.set_page_config(page_title="Acompanhamento de Semaglutida", page_icon="📉", layout="centered")
 
 # --- 1. CONFIGURAÇÃO DO SUPABASE ---
 try:
@@ -65,7 +65,7 @@ def get_authenticated_user():
             st.query_params.clear()
         except Exception as error:
             if "code verifier" in str(error).lower():
-                st.error("A sessão de login expirou. Clique em Entrar com Google novamente.")
+                    st.error("A sessão de login expirou. Clique em Entrar com Google novamente.")
             else:
                 st.error("Não foi possível concluir o login com Google. Tente novamente.")
             st.stop()
@@ -147,6 +147,7 @@ def guardar_registo(user_id, data_registo, peso, tomou, dose):
 
 # --- 3. MOTOR DE INTELIGÊNCIA ARTIFICIAL ---
 def gerar_predicao_ml(df_historico, peso_inicial):
+    df_historico = df_historico.copy().sort_values('data_registo')
     df_historico['data_registo'] = pd.to_datetime(df_historico['data_registo'])
     data_inicio = df_historico['data_registo'].min()
     df_historico['Dias_Tratamento'] = (df_historico['data_registo'] - data_inicio).dt.days
@@ -159,29 +160,50 @@ def gerar_predicao_ml(df_historico, peso_inicial):
     modelo.fit(X, y)
     
     ultimo_dia = df_historico['Dias_Tratamento'].max()
-    dias_futuros = pd.DataFrame({'Dias_Tratamento': np.arange(ultimo_dia + 1, ultimo_dia + 31)})
-    datas_futuras = pd.date_range(start=df_historico['data_registo'].max() + timedelta(days=1), periods=30)
-    
-    predicao_futura = modelo.predict(dias_futuros)
+    dias_alvo = np.array([10, 20, 30])
+    dias_futuros = pd.DataFrame({'Dias_Tratamento': ultimo_dia + dias_alvo})
+    datas_futuras = df_historico['data_registo'].max() + pd.to_timedelta(dias_alvo, unit='D')
+    predicoes = modelo.predict(dias_futuros)
+    peso_atual = float(df_historico['peso'].iloc[-1])
+    perda_atual = ((peso_inicial - peso_atual) / peso_inicial) * 100
+    projecoes = {
+        int(dias): {
+            'peso': float(peso),
+            'perda': float(((peso_inicial - peso) / peso_inicial) * 100),
+        }
+        for dias, peso in zip(dias_alvo, predicoes)
+    }
     
     # Geração do Gráfico
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.scatter(df_historico['data_registo'], y, color='#1f77b4', label='Peso Real Registado', zorder=5)
-    ax.plot(df_historico['data_registo'], modelo.predict(X), color='gray', linestyle='--', alpha=0.6, label='Curva de Ajuste')
-    ax.plot(datas_futuras, predicao_futura, color='#d62728', linestyle='-', linewidth=2, label='Predição (+30 Dias)')
+    ax.scatter(df_historico['data_registo'], y, color='#1f77b4', label='Peso real', zorder=5)
+    ax.plot(df_historico['data_registo'], modelo.predict(X), color='gray', linestyle='--', alpha=0.6, label='Tendência ajustada')
+    ax.plot(datas_futuras, predicoes, color='#d62728', linestyle='-', linewidth=2, marker='o', label='Projeções')
     
-    ax.set_title("Evolução e Predição de Emagrecimento")
+    ax.set_title("Evolução e projeção do peso")
     ax.set_ylabel("Peso (kg)")
     ax.legend()
     ax.grid(True, alpha=0.3)
     
-    peso_30d = predicao_futura[-1]
-    perda_estimada = ((peso_inicial - peso_30d) / peso_inicial) * 100
-    
-    return fig, peso_30d, perda_estimada
+    return fig, peso_atual, perda_atual, projecoes
+
+
+def gerar_grafico_doses(df_historico):
+    df_doses = df_historico.copy()
+    df_doses['data_registo'] = pd.to_datetime(df_doses['data_registo'])
+    df_doses = df_doses[df_doses['tomou_dose'] & (df_doses['quantidade_dose'] > 0)]
+
+    fig, ax = plt.subplots(figsize=(10, 3.5))
+    ax.bar(df_doses['data_registo'], df_doses['quantidade_dose'], color='#2ca02c', width=0.8)
+    ax.set_title("Doses registradas ao longo do tratamento")
+    ax.set_ylabel("Dose (mg)")
+    ax.set_xlabel("Data")
+    ax.grid(axis='y', alpha=0.25)
+    fig.autofmt_xdate()
+    return fig
 
 # --- 4. INTERFACE DO UTILIZADOR (FRONTEND) ---
-st.title("📉 Acompanhamento IA - Semaglutida")
+st.title("📉 Acompanhamento com IA - Semaglutida")
 
 user = get_authenticated_user()
 
@@ -200,14 +222,14 @@ with st.sidebar:
 perfil = obter_perfil(user.id)
 
 if not perfil:
-    st.warning("Complete o seu perfil para começar.")
+    st.warning("Complete seu perfil para começar.")
     metadata = user.user_metadata or {}
     nome_padrao = metadata.get("full_name") or metadata.get("name") or ""
     with st.form("onboarding"):
-        nome = st.text_input("Nome Completo", value=nome_padrao)
-        nascimento = st.date_input("Data de Nascimento", min_value=date(1940, 1, 1), max_value=date.today())
+        nome = st.text_input("Nome completo", value=nome_padrao)
+        nascimento = st.date_input("Data de nascimento", min_value=date(1940, 1, 1), max_value=date.today())
         sexo = st.selectbox("Sexo", ["Feminino", "Masculino"])
-        peso_ini = st.number_input("Peso Inicial (kg)", min_value=30.0, max_value=250.0, step=0.1)
+        peso_ini = st.number_input("Peso inicial (kg)", min_value=30.0, max_value=250.0, step=0.1)
 
         if st.form_submit_button("Criar Perfil"):
             supabase.table('utilizadores').insert({
@@ -222,38 +244,49 @@ else:
     df = obter_historico(perfil['id'])
 
     # --- ZONA DE REGISTO DIÁRIO ---
-    st.subheader("📝 Adicionar/Atualizar Peso")
+    st.subheader("📝 Registrar peso")
     with st.form("registo_diario"):
         col1, col2 = st.columns(2)
-        data_input = col1.date_input("Data da Medição", value=date.today())
+        data_input = col1.date_input("Data da medição", value=date.today())
         peso_input = col2.number_input("Peso (kg)", min_value=30.0, max_value=250.0, step=0.1, value=float(df['peso'].iloc[-1]) if not df.empty else perfil['peso_inicial'])
 
-        tomou_remedio = st.checkbox("Tomei a dose de Semaglutida neste dia")
-        dose_input = st.selectbox("Quantidade da dose (mg)", [0.25, 0.5, 1.0, 1.7, 2.4, 2.5]) if tomou_remedio else 0.0
+        tomou_remedio = st.checkbox("Tomei a dose de semaglutida neste dia")
+        dose_input = st.selectbox("Dose aplicada (mg)", [0.25, 0.5, 1.0, 1.7, 2.4, 2.5]) if tomou_remedio else 0.0
 
         if st.form_submit_button("Guardar Registo"):
             guardar_registo(perfil['id'], data_input, peso_input, tomou_remedio, dose_input)
-            st.success("Dados guardados! A IA está a recalcular a sua curva...")
+            st.success("Registro salvo! A IA está recalculando sua curva...")
             st.rerun()
 
     # --- ZONA DA INTELIGÊNCIA ARTIFICIAL ---
     st.divider()
-    st.subheader("🧠 Análise Preditiva e Histórico")
+    st.subheader("🧠 Análise preditiva e histórico")
 
     if len(df) > 3:
-        fig, peso_projetado, perda = gerar_predicao_ml(df, perfil['peso_inicial'])
+        fig, peso_atual, perda_atual, projecoes = gerar_predicao_ml(df, perfil['peso_inicial'])
         st.pyplot(fig)
 
-        col_met1, col_met2, col_met3 = st.columns(3)
-        col_met1.metric("Peso Atual", f"{df['peso'].iloc[-1]:.1f} kg")
-        col_met2.metric("Projeção (30 dias)", f"{peso_projetado:.1f} kg")
-        col_met3.metric("Perda Total Estimada", f"{perda:.1f}%")
+        st.caption("Percentuais calculados em relação ao peso inicial informado no perfil.")
+        st.caption("As projeções são estatísticas e não substituem orientação médica.")
+        col_met1, col_met2, col_met3, col_met4 = st.columns(4)
+        col_met1.metric("Perda atual", f"{perda_atual:.1f}%", f"{peso_atual:.1f} kg")
+        col_met2.metric("Previsão em 10 dias", f"{projecoes[10]['perda']:.1f}%", f"{projecoes[10]['peso']:.1f} kg")
+        col_met3.metric("Previsão em 20 dias", f"{projecoes[20]['perda']:.1f}%", f"{projecoes[20]['peso']:.1f} kg")
+        col_met4.metric("Previsão em 30 dias", f"{projecoes[30]['perda']:.1f}%", f"{projecoes[30]['peso']:.1f} kg")
 
-        if perda > 15:
-            st.info("🔵 Ritmo Acelerado (Acima da média clínica)")
-        elif perda >= 6:
-            st.success("🟢 Ritmo Esperado (De acordo com a literatura médica)")
+        st.subheader("💉 Histórico de doses")
+        df_doses = df[df['tomou_dose'] & (df['quantidade_dose'] > 0)]
+        if not df_doses.empty:
+            st.pyplot(gerar_grafico_doses(df), clear_figure=True)
         else:
-            st.warning("🟠 Ritmo Lento (Abaixo da média clínica)")
+            st.info("Ainda não há doses registradas para exibir neste gráfico.")
+
+        perda_30d = projecoes[30]['perda']
+        if perda_30d > 15:
+            st.info("🔵 Ritmo projetado acelerado (acima da referência clínica)")
+        elif perda_30d >= 6:
+            st.success("🟢 Ritmo projetado esperado (de acordo com a referência clínica)")
+        else:
+            st.warning("🟠 Ritmo projetado lento (abaixo da referência clínica)")
     else:
-        st.info("Continue a registar o seu peso durante mais alguns dias para a Inteligência Artificial conseguir desenhar a sua curva personalizada.")
+        st.info("Continue registrando seu peso por mais alguns dias para a IA calcular uma curva personalizada.")

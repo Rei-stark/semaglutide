@@ -1,6 +1,6 @@
 # Semaglutida
 
-Aplicação Streamlit para acompanhar peso e registos de dose de semaglutida, com uma projeção estatística baseada no histórico do utilizador.
+Aplicação Streamlit para acompanhar peso e registros de dose de semaglutida, com uma projeção estatística baseada no histórico do usuário.
 
 ## Requisitos
 
@@ -42,7 +42,7 @@ A aplicação abre por padrão em `http://localhost:8501`.
 - `requirements.txt`: dependências Python
 - `.streamlit/secrets.toml.example`: modelo de configuração local
 - `database/schema.sql`: tabelas e políticas RLS necessárias no Supabase
-- `database/migrate_google_auth.sql`: migração dos perfis e registos existentes para os UUIDs do Google
+- `database/migrate_google_auth.sql`: migração dos perfis e registros existentes para os UUIDs do Google
 - `Semaglutida.ipynb`: notebook original
 
 > Esta aplicação é um protótipo de acompanhamento e não substitui avaliação ou orientação médica.
