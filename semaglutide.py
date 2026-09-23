@@ -14,11 +14,12 @@ st.set_page_config(page_title="Predição Semaglutida", page_icon="📉", layout
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-    APP_URL = st.secrets["APP_URL"]
 except KeyError as error:
     raise RuntimeError(
-        "Configure SUPABASE_URL, SUPABASE_KEY e APP_URL em .streamlit/secrets.toml."
+        "Configure SUPABASE_URL e SUPABASE_KEY em .streamlit/secrets.toml."
     ) from error
+
+APP_URL = st.secrets.get("APP_URL", "").strip()
 
 def get_supabase_client():
     if "supabase_client" not in st.session_state:
@@ -43,10 +44,10 @@ def get_authenticated_user():
 
 
 def login_with_google():
-    response = supabase.auth.sign_in_with_oauth({
-        "provider": "google",
-        "options": {"redirect_to": APP_URL},
-    })
+    credentials = {"provider": "google"}
+    if APP_URL:
+        credentials["options"] = {"redirect_to": APP_URL}
+    response = supabase.auth.sign_in_with_oauth(credentials)
     st.link_button("Entrar com Google", response.url, use_container_width=True)
 
 # --- 2. FUNÇÕES DE BASE DE DADOS ---
