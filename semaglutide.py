@@ -325,6 +325,13 @@ def gerar_pdf_historico(df_historico, titulo):
     tabela['Peso (kg)'] = tabela['Peso (kg)'].map(lambda valor: f'{valor:.1f}')
     tabela['Dose (mg)'] = tabela['Dose (mg)'].map(lambda valor: f'{valor:.2f}')
 
+    def adicionar_marca(fig):
+        if LOGO_PATH.exists():
+            logo_ax = fig.add_axes([0.03, 0.02, 0.08, 0.05])
+            logo_ax.imshow(plt.imread(LOGO_PATH))
+            logo_ax.axis('off')
+        fig.text(0.13, 0.035, 'Desenvolvido por Reinaldo Galvão', fontsize=8, color='#555555')
+
     arquivo = BytesIO()
     with PdfPages(arquivo) as pdf:
         fig, ax = plt.subplots(figsize=(11.69, 8.27))
@@ -334,6 +341,7 @@ def gerar_pdf_historico(df_historico, titulo):
         ax.text(0.03, 0.80, f'Registros: {len(dados)}', fontsize=12)
         ax.text(0.03, 0.76, f'Peso médio: {dados["peso"].mean():.1f} kg', fontsize=12)
         ax.text(0.03, 0.72, f'Dose total: {dados.loc[dados["tomou_dose"], "quantidade_dose"].sum():.2f} mg', fontsize=12)
+        adicionar_marca(fig)
         pdf.savefig(fig, bbox_inches='tight')
         plt.close(fig)
 
@@ -350,6 +358,7 @@ def gerar_pdf_historico(df_historico, titulo):
             tabela_pdf.auto_set_font_size(False)
             tabela_pdf.set_fontsize(10)
             tabela_pdf.scale(1, 1.6)
+            adicionar_marca(fig)
             pdf.savefig(fig, bbox_inches='tight')
             plt.close(fig)
 
@@ -469,7 +478,7 @@ with st.sidebar:
         st.image(str(LOGO_PATH), width=150)
     st.write(f"Conta: {user.email}")
     menu = st.radio("Menu", ["Acompanhamento", "Estatísticas", "Relatório do histórico"])
-    st.caption("Desenvolvido por Image Tech")
+    st.caption("Desenvolvido por Reinaldo Galvão")
     if st.button("Sair", use_container_width=True):
         supabase.auth.sign_out()
         st.session_state.pop("supabase_client", None)
