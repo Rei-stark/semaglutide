@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from supabase import create_client, Client
+from supabase import create_client
+from supabase.lib.client_options import SyncClientOptions
 from sklearn.linear_model import Ridge
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import make_pipeline
@@ -21,9 +22,29 @@ except KeyError as error:
 
 APP_URL = st.secrets.get("APP_URL", "").strip()
 
+
+class StreamlitAuthStorage:
+    def get_item(self, key):
+        return st.session_state.get(f"supabase_auth_{key}")
+
+    def set_item(self, key, value):
+        st.session_state[f"supabase_auth_{key}"] = value
+
+    def remove_item(self, key):
+        st.session_state.pop(f"supabase_auth_{key}", None)
+
+
 def get_supabase_client():
     if "supabase_client" not in st.session_state:
-        st.session_state.supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        options = SyncClientOptions(
+            storage=StreamlitAuthStorage(),
+            flow_type="pkce",
+        )
+        st.session_state.supabase_client = create_client(
+            SUPABASE_URL,
+            SUPABASE_KEY,
+            options,
+        )
     return st.session_state.supabase_client
 
 supabase = get_supabase_client()
@@ -35,8 +56,11 @@ def get_authenticated_user():
         try:
             supabase.auth.exchange_code_for_session(auth_code)
             st.query_params.clear()
-        except Exception:
-            st.error("Não foi possível concluir o login com Google. Tente novamente.")
+        except Exception as error:
+            if "code verifier" in str(error).lower():
+                st.error("A sessão de login expirou. Clique em Entrar com Google novamente.")
+            else:
+                st.error("Não foi possível concluir o login com Google. Tente novamente.")
             st.stop()
 
     session = supabase.auth.get_session()
