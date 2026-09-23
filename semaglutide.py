@@ -316,7 +316,7 @@ def filtrar_historico(df_historico, chave="periodo_relatorio"):
     return dados[dados['data_registo'].dt.date >= data_inicio]
 
 
-def gerar_pdf_historico(df_historico, titulo):
+def gerar_pdf_historico(df_historico, titulo, perfil=None):
     dados = df_historico.copy()
     dados['data_registo'] = pd.to_datetime(dados['data_registo'])
     tabela = dados[['data_registo', 'peso', 'tomou_dose', 'quantidade_dose']].copy()
@@ -341,6 +341,11 @@ def gerar_pdf_historico(df_historico, titulo):
         ax.text(0.03, 0.80, f'Registros: {len(dados)}', fontsize=12)
         ax.text(0.03, 0.76, f'Peso médio: {dados["peso"].mean():.1f} kg', fontsize=12)
         ax.text(0.03, 0.72, f'Dose total: {dados.loc[dados["tomou_dose"], "quantidade_dose"].sum():.2f} mg', fontsize=12)
+        if perfil:
+            nascimento = pd.to_datetime(perfil['data_nascimento']).strftime('%d/%m/%Y')
+            ax.text(0.03, 0.64, f'Nome: {perfil["nome"]}', fontsize=11)
+            ax.text(0.03, 0.60, f'Sexo: {perfil["sexo"]}', fontsize=11)
+            ax.text(0.03, 0.56, f'Data de nascimento: {nascimento}', fontsize=11)
         adicionar_marca(fig)
         pdf.savefig(fig, bbox_inches='tight')
         plt.close(fig)
@@ -365,11 +370,11 @@ def gerar_pdf_historico(df_historico, titulo):
     return arquivo.getvalue()
 
 
-def exibir_download_pdf(df_historico, titulo):
+def exibir_download_pdf(df_historico, titulo, perfil):
     if not df_historico.empty:
         st.download_button(
             "Baixar relatório em PDF",
-            gerar_pdf_historico(df_historico, titulo),
+            gerar_pdf_historico(df_historico, titulo, perfil),
             file_name="relatorio_semaglutida.pdf",
             mime="application/pdf",
             use_container_width=True,
@@ -411,7 +416,7 @@ def exibir_relatorio(df_historico):
         mime="text/csv",
         use_container_width=True,
     )
-    exibir_download_pdf(dados_filtrados, "Relatório do histórico de semaglutida")
+    exibir_download_pdf(dados_filtrados, "Relatório do histórico de semaglutida", perfil)
 
 
 def exibir_estatisticas(df_historico, peso_inicial):
@@ -461,7 +466,7 @@ def exibir_estatisticas(df_historico, peso_inicial):
         st.info("Não há doses registradas no período selecionado.")
     else:
         st.pyplot(gerar_grafico_doses(dados), clear_figure=True)
-    exibir_download_pdf(dados, "Estatísticas do tratamento com semaglutida")
+    exibir_download_pdf(dados, "Estatísticas do tratamento com semaglutida", perfil)
 
 # --- 4. INTERFACE DO UTILIZADOR (FRONTEND) ---
 st.title("📉 Acompanhamento com IA - Semaglutida")
@@ -615,4 +620,4 @@ else:
 
     st.divider()
     st.caption("Relatório completo")
-    exibir_download_pdf(df, "Acompanhamento de semaglutida")
+    exibir_download_pdf(df, "Acompanhamento de semaglutida", perfil)
