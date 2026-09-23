@@ -35,7 +35,7 @@ drop policy if exists "utilizadores_insert_own" on public.utilizadores;
 create policy "utilizadores_insert_own"
     on public.utilizadores for insert
     to authenticated
-    with check (auth.uid() = id and auth.jwt() ->> 'email' = email);
+    with check (auth.uid() = id and lower(auth.jwt() ->> 'email') = lower(email));
 
 drop policy if exists "utilizadores_update_own" on public.utilizadores;
 create policy "utilizadores_update_own"
