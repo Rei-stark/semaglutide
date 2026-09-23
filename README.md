@@ -43,6 +43,7 @@ A aplicação abre por padrão em `http://localhost:8501`.
 - `.streamlit/secrets.toml.example`: modelo de configuração local
 - `database/schema.sql`: tabelas e políticas RLS necessárias no Supabase
 - `database/migrate_google_auth.sql`: migração dos perfis e registros existentes para os UUIDs do Google
+- `database/corrigir_doses.sql`: normalização das doses antigas de 2,5 mg e 5 mg para 2,4 mg
 - `Semaglutida.ipynb`: notebook original
 
 > Esta aplicação é um protótipo de acompanhamento e não substitui avaliação ou orientação médica.

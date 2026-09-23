@@ -14,7 +14,8 @@ create table if not exists public.registos_diarios (
     data_registo date not null,
     peso numeric(5, 2) not null check (peso between 30 and 250),
     tomou_dose boolean not null default false,
-    quantidade_dose numeric(4, 2) not null default 0 check (quantidade_dose >= 0),
+    quantidade_dose numeric(4, 2) not null default 0
+        check (quantidade_dose in (0, 0.25, 0.5, 1.0, 2.0, 2.4)),
     created_at timestamptz not null default now(),
     unique (user_id, data_registo)
 );

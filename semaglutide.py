@@ -251,7 +251,7 @@ else:
         peso_input = col2.number_input("Peso (kg)", min_value=30.0, max_value=250.0, step=0.1, value=float(df['peso'].iloc[-1]) if not df.empty else perfil['peso_inicial'])
 
         tomou_remedio = st.checkbox("Tomei a dose de semaglutida neste dia")
-        dose_input = st.selectbox("Dose aplicada (mg)", [0.25, 0.5, 1.0, 1.7, 2.4, 2.5]) if tomou_remedio else 0.0
+        dose_input = st.selectbox("Dose aplicada (mg)", [0.25, 0.5, 1.0, 2.0, 2.4]) if tomou_remedio else 0.0
 
         if st.form_submit_button("Guardar Registo"):
             guardar_registo(perfil['id'], data_input, peso_input, tomou_remedio, dose_input)
