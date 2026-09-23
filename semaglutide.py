@@ -232,36 +232,43 @@ def gerar_grafico_adesao(df_historico):
     return fig, adesao
 
 
+def filtrar_historico(df_historico, chave="periodo_relatorio"):
+    if df_historico.empty:
+        return df_historico
+
+    dados = df_historico.copy()
+    dados['data_registo'] = pd.to_datetime(dados['data_registo'])
+    data_minima = dados['data_registo'].min().date()
+    data_maxima = dados['data_registo'].max().date()
+    filtro = st.selectbox(
+        "Período",
+        ["Todos os registros", "Últimos 7 dias", "Últimos 30 dias", "Últimos 90 dias", "Período personalizado"],
+        key=chave,
+    )
+
+    if filtro == "Todos os registros":
+        return dados
+    if filtro == "Período personalizado":
+        col_inicio, col_fim = st.columns(2)
+        data_inicio = col_inicio.date_input("Data inicial", value=data_minima, min_value=data_minima, max_value=data_maxima, key=f"{chave}_inicio")
+        data_fim = col_fim.date_input("Data final", value=data_maxima, min_value=data_minima, max_value=data_maxima, key=f"{chave}_fim")
+        return dados[
+            (dados['data_registo'].dt.date >= data_inicio)
+            & (dados['data_registo'].dt.date <= data_fim)
+        ] if data_inicio <= data_fim else dados.iloc[0:0]
+
+    dias = {"Últimos 7 dias": 7, "Últimos 30 dias": 30, "Últimos 90 dias": 90}[filtro]
+    data_inicio = max(data_minima, data_maxima - timedelta(days=dias - 1))
+    return dados[dados['data_registo'].dt.date >= data_inicio]
+
+
 def exibir_relatorio(df_historico):
     st.header("📄 Relatório do histórico")
     if df_historico.empty:
         st.info("Ainda não há registros para o período selecionado.")
         return
 
-    dados = df_historico.copy()
-    dados['data_registo'] = pd.to_datetime(dados['data_registo'])
-    data_minima = dados['data_registo'].min().date()
-    data_maxima = dados['data_registo'].max().date()
-
-    filtro = st.selectbox(
-        "Período do relatório",
-        ["Todos os registros", "Últimos 7 dias", "Últimos 30 dias", "Últimos 90 dias", "Período personalizado"],
-    )
-
-    if filtro == "Todos os registros":
-        dados_filtrados = dados
-    elif filtro == "Período personalizado":
-        col_inicio, col_fim = st.columns(2)
-        data_inicio = col_inicio.date_input("Data inicial", value=data_minima, min_value=data_minima, max_value=data_maxima)
-        data_fim = col_fim.date_input("Data final", value=data_maxima, min_value=data_minima, max_value=data_maxima)
-        dados_filtrados = dados[
-            (dados['data_registo'].dt.date >= data_inicio)
-            & (dados['data_registo'].dt.date <= data_fim)
-        ] if data_inicio <= data_fim else dados.iloc[0:0]
-    else:
-        dias = {"Últimos 7 dias": 7, "Últimos 30 dias": 30, "Últimos 90 dias": 90}[filtro]
-        data_inicio = max(data_minima, data_maxima - timedelta(days=dias - 1))
-        dados_filtrados = dados[dados['data_registo'].dt.date >= data_inicio]
+    dados_filtrados = filtrar_historico(df_historico)
 
     if dados_filtrados.empty:
         st.info("Não há registros no período selecionado.")
@@ -291,6 +298,55 @@ def exibir_relatorio(df_historico):
         use_container_width=True,
     )
 
+
+def exibir_estatisticas(df_historico, peso_inicial):
+    st.header("📊 Estatísticas")
+    if df_historico.empty:
+        st.info("Ainda não há dados suficientes para calcular estatísticas.")
+        return
+
+    dados = filtrar_historico(df_historico, chave="periodo_estatisticas")
+    if dados.empty:
+        st.info("Não há registros no período selecionado.")
+        return
+
+    peso_atual = float(dados['peso'].iloc[-1])
+    peso_minimo = float(dados['peso'].min())
+    peso_maximo = float(dados['peso'].max())
+    perda_periodo = ((float(dados['peso'].iloc[0]) - peso_atual) / float(dados['peso'].iloc[0])) * 100
+    dias_com_dose = int(dados['tomou_dose'].sum())
+    adesao = (dias_com_dose / len(dados)) * 100
+    dose_media = float(dados.loc[dados['tomou_dose'], 'quantidade_dose'].mean()) if dias_com_dose else 0.0
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Registros", len(dados))
+    col2.metric("Peso atual", f"{peso_atual:.1f} kg")
+    col3.metric("Perda no período", f"{perda_periodo:.1f}%")
+    col4, col5, col6 = st.columns(3)
+    col4.metric("Menor peso", f"{peso_minimo:.1f} kg")
+    col5.metric("Maior peso", f"{peso_maximo:.1f} kg")
+    col6.metric("Adesão registrada", f"{adesao:.1f}%")
+    st.caption(f"Dose média nos dias registrados: {dose_media:.2f} mg. Peso inicial do perfil: {peso_inicial:.1f} kg.")
+
+    st.subheader("Evolução do peso no período")
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(dados['data_registo'], dados['peso'], marker='o', color='#1f77b4', label='Peso registrado')
+    if len(dados) >= 3:
+        ax.plot(dados['data_registo'], dados['peso'].rolling(3, min_periods=1).mean(), color='#ff7f0e', linewidth=2, label='Média móvel (3 registros)')
+    ax.set_ylabel("Peso (kg)")
+    ax.set_xlabel("Data")
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+    fig.autofmt_xdate()
+    st.pyplot(fig, clear_figure=True)
+
+    st.subheader("Doses no período")
+    dados_doses = dados[dados['tomou_dose'] & (dados['quantidade_dose'] > 0)]
+    if dados_doses.empty:
+        st.info("Não há doses registradas no período selecionado.")
+    else:
+        st.pyplot(gerar_grafico_doses(dados), clear_figure=True)
+
 # --- 4. INTERFACE DO UTILIZADOR (FRONTEND) ---
 st.title("📉 Acompanhamento com IA - Semaglutida")
 
@@ -303,7 +359,7 @@ if not user:
 
 with st.sidebar:
     st.write(f"Conta: {user.email}")
-    menu = st.radio("Menu", ["Acompanhamento", "Relatório do histórico"])
+    menu = st.radio("Menu", ["Acompanhamento", "Estatísticas", "Relatório do histórico"])
     if st.button("Sair", use_container_width=True):
         supabase.auth.sign_out()
         st.session_state.pop("supabase_client", None)
@@ -335,6 +391,9 @@ else:
 
     if menu == "Relatório do histórico":
         exibir_relatorio(df)
+        st.stop()
+    if menu == "Estatísticas":
+        exibir_estatisticas(df, perfil['peso_inicial'])
         st.stop()
 
     # --- ZONA DE REGISTO DIÁRIO ---
