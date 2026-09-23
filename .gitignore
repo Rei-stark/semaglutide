@@ -4,6 +4,7 @@ __pycache__/
 venv/
 env/
 .env
+client_secret_*.json
 .streamlit/secrets.toml
 .ipynb_checkpoints/
 .DS_Store
