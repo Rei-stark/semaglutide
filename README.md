@@ -16,7 +16,7 @@ python -m pip install -r requirements.txt
 Copy-Item .streamlit\secrets.toml.example .streamlit\secrets.toml
 ```
 
-Edite `.streamlit/secrets.toml` com os valores do seu projeto Supabase. `APP_URL` é opcional: quando omitido, o login usa a Site URL configurada no Supabase. Esse arquivo é ignorado pelo Git e não deve ser commitado.
+Edite `.streamlit/secrets.toml` com os valores do seu projeto Supabase e defina `APP_URL` como a URL pública exata do Streamlit Cloud. Esse arquivo é ignorado pelo Git e não deve ser commitado.
 
 ## Google e Supabase Auth
 

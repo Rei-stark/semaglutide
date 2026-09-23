@@ -8,6 +8,7 @@ from sklearn.linear_model import Ridge
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import make_pipeline
 from datetime import date, timedelta
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 st.set_page_config(page_title="Predição Semaglutida", page_icon="📉", layout="centered")
 
@@ -29,6 +30,8 @@ class StreamlitAuthStorage:
 
     def set_item(self, key, value):
         st.session_state[f"supabase_auth_{key}"] = value
+        if key.endswith("-code-verifier"):
+            st.session_state.supabase_pkce_verifier = value
 
     def remove_item(self, key):
         st.session_state.pop(f"supabase_auth_{key}", None)
@@ -53,8 +56,12 @@ supabase = get_supabase_client()
 def get_authenticated_user():
     auth_code = st.query_params.get("code")
     if auth_code:
+        code_verifier = st.query_params.get("pkce_verifier")
+        exchange_params = {"auth_code": auth_code}
+        if code_verifier:
+            exchange_params["code_verifier"] = code_verifier
         try:
-            supabase.auth.exchange_code_for_session({"auth_code": auth_code})
+            supabase.auth.exchange_code_for_session(exchange_params)
             st.query_params.clear()
         except Exception as error:
             if "code verifier" in str(error).lower():
@@ -68,9 +75,12 @@ def get_authenticated_user():
 
 
 def login_with_google():
+    if not APP_URL:
+        st.error("Configure APP_URL com a URL pública do Streamlit Cloud nos secrets.")
+        st.stop()
+
     credentials = {"provider": "google"}
-    if APP_URL:
-        credentials["options"] = {"redirect_to": APP_URL}
+    credentials["options"] = {"redirect_to": APP_URL}
     try:
         response = supabase.auth.sign_in_with_oauth(credentials)
     except Exception as error:
@@ -81,7 +91,33 @@ def login_with_google():
             )
             st.stop()
         raise
-    st.link_button("Entrar com Google", response.url, use_container_width=True)
+    code_verifier = st.session_state.get("supabase_pkce_verifier")
+    if not code_verifier:
+        st.error("Não foi possível preparar a sessão segura do login. Tente novamente.")
+        st.stop()
+
+    authorization_url = urlsplit(response.url)
+    authorization_query = parse_qs(authorization_url.query, keep_blank_values=True)
+    redirect_url = authorization_query.get("redirect_to", [APP_URL])[0]
+    redirect_parts = urlsplit(redirect_url)
+    redirect_query = parse_qs(redirect_parts.query, keep_blank_values=True)
+    redirect_query["pkce_verifier"] = [code_verifier]
+    redirect_url = urlunsplit((
+        redirect_parts.scheme,
+        redirect_parts.netloc,
+        redirect_parts.path,
+        urlencode(redirect_query, doseq=True),
+        redirect_parts.fragment,
+    ))
+    authorization_query["redirect_to"] = [redirect_url]
+    authorization_url = urlunsplit((
+        authorization_url.scheme,
+        authorization_url.netloc,
+        authorization_url.path,
+        urlencode(authorization_query, doseq=True),
+        authorization_url.fragment,
+    ))
+    st.link_button("Entrar com Google", authorization_url, use_container_width=True)
 
 # --- 2. FUNÇÕES DE BASE DE DADOS ---
 def obter_perfil(user_id):
