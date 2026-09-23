@@ -121,8 +121,8 @@ def login_with_google():
 
 # --- 2. FUNÇÕES DE BASE DE DADOS ---
 def obter_perfil(user_id):
-    resposta = supabase.table('utilizadores').select('*').eq('id', user_id).maybe_single().execute()
-    return resposta.data if resposta.data else None
+    resposta = supabase.table('utilizadores').select('*').eq('id', user_id).execute()
+    return resposta.data[0] if resposta.data else None
 
 def obter_historico(user_id):
     resposta = supabase.table('registos_diarios').select('*').eq('user_id', user_id).order('data_registo').execute()
