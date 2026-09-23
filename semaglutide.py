@@ -269,10 +269,10 @@ else:
         st.caption("Percentuais calculados em relação ao peso inicial informado no perfil.")
         st.caption("As projeções são estatísticas e não substituem orientação médica.")
         col_met1, col_met2, col_met3, col_met4 = st.columns(4)
-        col_met1.metric("Perda atual", f"{perda_atual:.1f}%", f"{peso_atual:.1f} kg")
-        col_met2.metric("Previsão em 10 dias", f"{projecoes[10]['perda']:.1f}%", f"{projecoes[10]['peso']:.1f} kg")
-        col_met3.metric("Previsão em 20 dias", f"{projecoes[20]['perda']:.1f}%", f"{projecoes[20]['peso']:.1f} kg")
-        col_met4.metric("Previsão em 30 dias", f"{projecoes[30]['perda']:.1f}%", f"{projecoes[30]['peso']:.1f} kg")
+        col_met1.metric("Perda atual", f"{perda_atual:.1f}%", help=f"Peso atual: {peso_atual:.1f} kg")
+        col_met2.metric("Previsão em 10 dias", f"{projecoes[10]['perda']:.1f}%", help=f"Peso projetado: {projecoes[10]['peso']:.1f} kg")
+        col_met3.metric("Previsão em 20 dias", f"{projecoes[20]['perda']:.1f}%", help=f"Peso projetado: {projecoes[20]['peso']:.1f} kg")
+        col_met4.metric("Previsão em 30 dias", f"{projecoes[30]['perda']:.1f}%", help=f"Peso projetado: {projecoes[30]['peso']:.1f} kg")
 
         st.subheader("💉 Histórico de doses")
         df_doses = df[df['tomou_dose'] & (df['quantidade_dose'] > 0)]
