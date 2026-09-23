@@ -137,13 +137,21 @@ def obter_historico(user_id):
     return pd.DataFrame(resposta.data)
 
 def guardar_registo(user_id, data_registo, peso, tomou, dose):
-    supabase.table('registos_diarios').upsert({
-        'user_id': user_id,
-        'data_registo': str(data_registo),
-        'peso': float(peso),
-        'tomou_dose': tomou,
-        'quantidade_dose': float(dose) if tomou else 0.0
-    }).execute()
+    try:
+        supabase.table('registos_diarios').upsert({
+            'user_id': user_id,
+            'data_registo': str(data_registo),
+            'peso': float(peso),
+            'tomou_dose': tomou,
+            'quantidade_dose': float(dose) if tomou else 0.0
+        }, on_conflict='user_id,data_registo').execute()
+    except Exception:
+        st.error("Não foi possível salvar o registro no Supabase.")
+        st.info(
+            "Confirme que a tabela registos_diarios possui uma restrição única "
+            "para user_id e data_registo e que as permissões authenticated estão ativas."
+        )
+        st.stop()
 
 # --- 3. MOTOR DE INTELIGÊNCIA ARTIFICIAL ---
 def gerar_predicao_ml(df_historico, peso_inicial):
@@ -253,7 +261,7 @@ else:
         tomou_remedio = st.checkbox("Tomei a dose de semaglutida neste dia")
         dose_input = st.selectbox("Dose aplicada (mg)", [0.25, 0.5, 1.0, 2.0, 2.4]) if tomou_remedio else 0.0
 
-        if st.form_submit_button("Guardar Registo"):
+        if st.form_submit_button("Salvar registro"):
             guardar_registo(perfil['id'], data_input, peso_input, tomou_remedio, dose_input)
             st.success("Registro salvo! A IA está recalculando sua curva...")
             st.rerun()
