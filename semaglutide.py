@@ -521,7 +521,7 @@ if not perfil:
         nome = st.text_input("Nome completo", value=nome_padrao)
         nascimento = st.date_input("Data de nascimento", min_value=date(1940, 1, 1), max_value=date.today())
         sexo = st.selectbox("Sexo", ["Feminino", "Masculino"])
-        peso_ini = st.number_input("Peso inicial (kg)", min_value=30.0, max_value=250.0, step=0.1)
+        peso_ini = st.number_input("Peso inicial (kg)", min_value=30.0, max_value=250.0, step=0.05)
 
         if st.form_submit_button("Criar Perfil"):
             supabase.table('utilizadores').insert({
@@ -553,7 +553,7 @@ else:
         tomou_padrao = bool(registro_do_dia['tomou_dose'].iloc[0]) if not registro_do_dia.empty else False
         dose_padrao = float(registro_do_dia['quantidade_dose'].iloc[0]) if not registro_do_dia.empty else 0.25
         opcoes_dose = [0.25, 0.5, 1.0, 2.0, 2.4]
-        peso_input = col2.number_input("Peso (kg)", min_value=30.0, max_value=250.0, step=0.1, value=peso_padrao, key=f"peso_input_{form_version}_{data_input}")
+        peso_input = col2.number_input("Peso (kg)", min_value=30.0, max_value=250.0, step=0.05, value=peso_padrao, key=f"peso_input_{form_version}_{data_input}")
 
         tomou_remedio = st.checkbox("Tomei a dose de semaglutida neste dia", value=tomou_padrao, key=f"tomou_remedio_{form_version}_{data_input}")
         dose_input = st.selectbox("Dose aplicada (mg)", opcoes_dose, index=opcoes_dose.index(dose_padrao) if dose_padrao in opcoes_dose else 0, key=f"dose_input_{form_version}_{data_input}") if tomou_remedio else 0.0
@@ -580,7 +580,7 @@ else:
                     "Peso registrado (kg)",
                     min_value=30.0,
                     max_value=250.0,
-                    step=0.1,
+                    step=0.05,
                     value=float(registro['peso']),
                 )
                 tomou_ajuste = st.checkbox(
