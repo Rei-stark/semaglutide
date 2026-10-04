@@ -265,6 +265,18 @@ def gerar_grafico_doses(df_historico):
     return fig
 
 
+def filtrar_registros_semanais(df_historico):
+    if df_historico.empty:
+        return df_historico.copy()
+
+    dados = df_historico.copy()
+    dados['data_registo'] = pd.to_datetime(dados['data_registo'])
+    dados = dados.sort_values('data_registo')
+    data_inicio = dados['data_registo'].iloc[0].normalize()
+    dias_desde_inicio = (dados['data_registo'].dt.normalize() - data_inicio).dt.days
+    return dados.loc[dias_desde_inicio.mod(7).eq(0)].copy()
+
+
 def filtrar_historico(df_historico, chave="periodo_relatorio"):
     if df_historico.empty:
         return df_historico
@@ -506,7 +518,7 @@ with st.sidebar:
         st.markdown(f"**Data de nascimento:** {nascimento_formatado}")
     else:
         st.caption("Perfil ainda não preenchido")
-    menu = st.radio("Menu", ["Acompanhamento", "Estatísticas", "Histórico"])
+    menu = st.radio("Menu", ["Acompanhamento", "Gráfico semanal", "Estatísticas", "Histórico"])
     st.caption("Desenvolvido por Reinaldo Galvão")
     if st.button("Sair", use_container_width=True):
         supabase.auth.sign_out()
@@ -545,18 +557,18 @@ else:
     # --- ZONA DE REGISTO DIÁRIO ---
     st.subheader("📝 Registrar peso")
     form_version = st.session_state.get("registro_form_version", 0)
+    data_input = st.date_input("Data da medição", value=date.today(), key=f"data_registro_{form_version}")
+    registro_do_dia = df[pd.to_datetime(df['data_registo']).dt.date == data_input] if not df.empty else df
+    peso_padrao = float(registro_do_dia['peso'].iloc[0]) if not registro_do_dia.empty else (float(df['peso'].iloc[-1]) if not df.empty else perfil['peso_inicial'])
+    tomou_padrao = bool(registro_do_dia['tomou_dose'].iloc[0]) if not registro_do_dia.empty else False
+    dose_padrao = float(registro_do_dia['quantidade_dose'].iloc[0]) if not registro_do_dia.empty else 0.25
     with st.form(f"registro_diario_{form_version}"):
         col1, col2 = st.columns(2)
-        data_input = col1.date_input("Data da medição", value=date.today(), key=f"data_registro_{form_version}")
-        registro_do_dia = df[pd.to_datetime(df['data_registo']).dt.date == data_input] if not df.empty else df
-        peso_padrao = float(registro_do_dia['peso'].iloc[0]) if not registro_do_dia.empty else (float(df['peso'].iloc[-1]) if not df.empty else perfil['peso_inicial'])
-        tomou_padrao = bool(registro_do_dia['tomou_dose'].iloc[0]) if not registro_do_dia.empty else False
-        dose_padrao = float(registro_do_dia['quantidade_dose'].iloc[0]) if not registro_do_dia.empty else 0.25
         opcoes_dose = [0.25, 0.5, 1.0, 2.0, 2.4]
-        peso_input = col2.number_input("Peso (kg)", min_value=30.0, max_value=250.0, step=0.05, value=peso_padrao, key=f"peso_input_{form_version}_{data_input}")
+        peso_input = col1.number_input("Peso (kg)", min_value=30.0, max_value=250.0, step=0.05, value=peso_padrao, key=f"peso_input_{form_version}_{data_input}")
 
-        tomou_remedio = st.checkbox("Tomei a dose de semaglutida neste dia", value=tomou_padrao, key=f"tomou_remedio_{form_version}_{data_input}")
-        dose_input = st.selectbox("Dose aplicada (mg)", opcoes_dose, index=opcoes_dose.index(dose_padrao) if dose_padrao in opcoes_dose else 0, key=f"dose_input_{form_version}_{data_input}") if tomou_remedio else 0.0
+        tomou_remedio = col2.checkbox("Tomei a dose de semaglutida neste dia", value=tomou_padrao, key=f"tomou_remedio_{form_version}_{data_input}")
+        dose_input = col2.selectbox("Dose aplicada (mg)", opcoes_dose, index=opcoes_dose.index(dose_padrao) if dose_padrao in opcoes_dose else 0, key=f"dose_input_{form_version}_{data_input}") if tomou_remedio else 0.0
 
         col_salvar, col_cancelar = st.columns(2)
         salvar = col_salvar.form_submit_button("Salvar registro")
@@ -603,8 +615,19 @@ else:
     st.divider()
     st.subheader("🧠 Análise preditiva e histórico")
 
-    if len(df) > 3:
-        fig, peso_atual, perda_atual, projecoes, erros = gerar_predicao_ml(df, perfil['peso_inicial'])
+    df_grafico = filtrar_registros_semanais(df) if menu == "Gráfico semanal" else df
+    if menu == "Gráfico semanal" and not df.empty:
+        primeira_data = pd.to_datetime(df['data_registo']).min().strftime('%d/%m/%Y')
+        st.caption(
+            f"Exibindo registros em intervalos de 7 dias, ancorados na primeira medição ({primeira_data})."
+        )
+
+    if len(df_grafico) > 3:
+        fig, peso_atual, perda_atual, projecoes, erros = gerar_predicao_ml(
+            df_grafico, perfil['peso_inicial']
+        )
+        if menu == "Gráfico semanal":
+            fig.axes[0].set_title("Evolução semanal e projeção do peso")
         st.pyplot(fig)
 
         st.caption("Percentuais calculados em relação ao peso inicial informado no perfil.")
@@ -620,13 +643,6 @@ else:
         col_met4.metric("Previsão em 30 dias", f"{projecoes[30]['perda']:.1f}%", help=f"Peso projetado: {projecoes[30]['peso']:.1f} kg")
         col_met4.caption(f"{perfil['peso_inicial'] - projecoes[30]['peso']:.1f} kg")
 
-        st.subheader("💉 Histórico de doses")
-        df_doses = df[df['tomou_dose'] & (df['quantidade_dose'] > 0)]
-        if not df_doses.empty:
-            st.pyplot(gerar_grafico_doses(df), clear_figure=True)
-        else:
-            st.info("Ainda não há doses registradas para exibir neste gráfico.")
-
         perda_30d = projecoes[30]['perda']
         if perda_30d > 15:
             st.info("🔵 Ritmo projetado acelerado (acima da referência clínica)")
@@ -634,8 +650,35 @@ else:
             st.success("🟢 Ritmo projetado esperado (de acordo com a referência clínica)")
         else:
             st.warning("🟠 Ritmo projetado lento (abaixo da referência clínica)")
+    elif menu == "Gráfico semanal" and not df_grafico.empty:
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(
+            df_grafico['data_registo'],
+            df_grafico['peso'],
+            marker='o',
+            color='blue',
+            label='Peso registrado semanalmente',
+        )
+        ax.set_title("Evolução semanal do peso")
+        ax.set_ylabel("Peso (kg)")
+        ax.set_xlabel("Data")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        fig.autofmt_xdate()
+        st.pyplot(fig, clear_figure=True)
+        st.info("As projeções serão exibidas após pelo menos quatro registros semanais.")
+    elif menu == "Gráfico semanal":
+        st.info("Ainda não há registros para exibir no gráfico semanal.")
     else:
         st.info("Continue registrando seu peso por mais alguns dias para a IA calcular uma curva personalizada.")
+
+    if len(df_grafico) > 3 or menu == "Gráfico semanal":
+        st.subheader("💉 Histórico de doses")
+        df_doses = df[df['tomou_dose'] & (df['quantidade_dose'] > 0)]
+        if not df_doses.empty:
+            st.pyplot(gerar_grafico_doses(df), clear_figure=True)
+        else:
+            st.info("Ainda não há doses registradas para exibir neste gráfico.")
 
     st.divider()
     st.caption("Relatório completo")
