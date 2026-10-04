@@ -274,7 +274,10 @@ def filtrar_registros_semanais(df_historico):
     dados = dados.sort_values('data_registo')
     data_inicio = dados['data_registo'].iloc[0].normalize()
     dias_desde_inicio = (dados['data_registo'].dt.normalize() - data_inicio).dt.days
-    return dados.loc[dias_desde_inicio.mod(7).eq(0)].copy()
+    registros_semanais = dias_desde_inicio.mod(7).eq(0)
+    if dias_desde_inicio.iloc[-1] % 7:
+        registros_semanais.iloc[-1] = True
+    return dados.loc[registros_semanais].copy()
 
 
 def filtrar_historico(df_historico, chave="periodo_relatorio"):
@@ -543,7 +546,8 @@ if not perfil:
             st.success("Perfil criado com sucesso.")
             st.rerun()
 else:
-    st.success(f"Olá, {perfil['nome']}! Bem-vindo de volta.")
+    if menu != "Gráfico semanal":
+        st.success(f"Olá, {perfil['nome']}! Bem-vindo de volta.")
 
     df = obter_historico(perfil['id'])
 
@@ -552,6 +556,31 @@ else:
         st.stop()
     if menu == "Estatísticas":
         exibir_estatisticas(df, perfil['peso_inicial'])
+        st.stop()
+    if menu == "Gráfico semanal":
+        df_semanal = filtrar_registros_semanais(df)
+        if not df_semanal.empty:
+            fig, ax = plt.subplots(figsize=(10, 5))
+            ax.plot(
+                df_semanal['data_registo'],
+                df_semanal['peso'],
+                marker='o',
+                color='blue',
+                label='Peso registrado',
+            )
+            ax.set_title("Histórico semanal do peso")
+            ax.set_ylabel("Peso (kg)")
+            ax.set_xlabel("Data")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            fig.autofmt_xdate()
+            st.pyplot(fig, clear_figure=True)
+
+        df_doses = df[df['tomou_dose'] & (df['quantidade_dose'] > 0)]
+        if not df_doses.empty:
+            st.pyplot(gerar_grafico_doses(df), clear_figure=True)
+        if df_semanal.empty and df_doses.empty:
+            st.info("Ainda não há registros para exibir nos gráficos.")
         st.stop()
 
     # --- ZONA DE REGISTO DIÁRIO ---
@@ -615,19 +644,8 @@ else:
     st.divider()
     st.subheader("🧠 Análise preditiva e histórico")
 
-    df_grafico = filtrar_registros_semanais(df) if menu == "Gráfico semanal" else df
-    if menu == "Gráfico semanal" and not df.empty:
-        primeira_data = pd.to_datetime(df['data_registo']).min().strftime('%d/%m/%Y')
-        st.caption(
-            f"Exibindo registros em intervalos de 7 dias, ancorados na primeira medição ({primeira_data})."
-        )
-
-    if len(df_grafico) > 3:
-        fig, peso_atual, perda_atual, projecoes, erros = gerar_predicao_ml(
-            df_grafico, perfil['peso_inicial']
-        )
-        if menu == "Gráfico semanal":
-            fig.axes[0].set_title("Evolução semanal e projeção do peso")
+    if len(df) > 3:
+        fig, peso_atual, perda_atual, projecoes, erros = gerar_predicao_ml(df, perfil['peso_inicial'])
         st.pyplot(fig)
 
         st.caption("Percentuais calculados em relação ao peso inicial informado no perfil.")
@@ -643,6 +661,13 @@ else:
         col_met4.metric("Previsão em 30 dias", f"{projecoes[30]['perda']:.1f}%", help=f"Peso projetado: {projecoes[30]['peso']:.1f} kg")
         col_met4.caption(f"{perfil['peso_inicial'] - projecoes[30]['peso']:.1f} kg")
 
+        st.subheader("💉 Histórico de doses")
+        df_doses = df[df['tomou_dose'] & (df['quantidade_dose'] > 0)]
+        if not df_doses.empty:
+            st.pyplot(gerar_grafico_doses(df), clear_figure=True)
+        else:
+            st.info("Ainda não há doses registradas para exibir neste gráfico.")
+
         perda_30d = projecoes[30]['perda']
         if perda_30d > 15:
             st.info("🔵 Ritmo projetado acelerado (acima da referência clínica)")
@@ -650,35 +675,8 @@ else:
             st.success("🟢 Ritmo projetado esperado (de acordo com a referência clínica)")
         else:
             st.warning("🟠 Ritmo projetado lento (abaixo da referência clínica)")
-    elif menu == "Gráfico semanal" and not df_grafico.empty:
-        fig, ax = plt.subplots(figsize=(10, 5))
-        ax.plot(
-            df_grafico['data_registo'],
-            df_grafico['peso'],
-            marker='o',
-            color='blue',
-            label='Peso registrado semanalmente',
-        )
-        ax.set_title("Evolução semanal do peso")
-        ax.set_ylabel("Peso (kg)")
-        ax.set_xlabel("Data")
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        fig.autofmt_xdate()
-        st.pyplot(fig, clear_figure=True)
-        st.info("As projeções serão exibidas após pelo menos quatro registros semanais.")
-    elif menu == "Gráfico semanal":
-        st.info("Ainda não há registros para exibir no gráfico semanal.")
     else:
         st.info("Continue registrando seu peso por mais alguns dias para a IA calcular uma curva personalizada.")
-
-    if len(df_grafico) > 3 or menu == "Gráfico semanal":
-        st.subheader("💉 Histórico de doses")
-        df_doses = df[df['tomou_dose'] & (df['quantidade_dose'] > 0)]
-        if not df_doses.empty:
-            st.pyplot(gerar_grafico_doses(df), clear_figure=True)
-        else:
-            st.info("Ainda não há doses registradas para exibir neste gráfico.")
 
     st.divider()
     st.caption("Relatório completo")
