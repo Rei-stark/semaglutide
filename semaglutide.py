@@ -280,7 +280,18 @@ def filtrar_registros_semanais(df_historico):
     return dados.loc[registros_semanais].copy()
 
 
-def gerar_grafico_semanal(df_semanal, dias_projecao=0):
+def filtrar_marcas_semanais_completas(df_semanal):
+    if df_semanal.empty:
+        return df_semanal.copy()
+
+    dados = df_semanal.copy().sort_values('data_registo')
+    dados['data_registo'] = pd.to_datetime(dados['data_registo'])
+    data_inicio = dados['data_registo'].iloc[0].normalize()
+    dias_desde_inicio = (dados['data_registo'].dt.normalize() - data_inicio).dt.days
+    return dados.loc[dias_desde_inicio.mod(7).eq(0)].copy()
+
+
+def gerar_grafico_semanal(df_semanal, semanas_projecao=0, df_semanal_completo=None):
     datas = pd.to_datetime(df_semanal['data_registo'])
     pesos = df_semanal['peso']
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -295,17 +306,25 @@ def gerar_grafico_semanal(df_semanal, dias_projecao=0):
         )
 
     datas_eixo = datas.tolist()
-    if dias_projecao > 0 and len(datas) > 1:
-        dias_futuros = list(range(7, dias_projecao + 1, 7))
-        if dias_futuros[-1] != dias_projecao:
-            dias_futuros.append(dias_projecao)
-        datas_futuras = pd.DatetimeIndex(
-            [datas.iloc[-1] + pd.Timedelta(days=dias) for dias in dias_futuros]
+    if semanas_projecao > 0 and df_semanal_completo is not None:
+        datas_ajuste = pd.to_datetime(
+            df_semanal_completo['data_registo']
+        ).reset_index(drop=True)
+        pesos_ajuste = df_semanal_completo['peso'].to_numpy(dtype=float)
+        dias_historicos = (datas_ajuste - datas_ajuste.iloc[0]).dt.days.to_numpy(dtype=float)
+        inclinacao, intercepto = np.polyfit(
+            dias_historicos,
+            pesos_ajuste,
+            1,
         )
-        dias_historicos = (datas - datas.iloc[0]).dt.days.to_numpy(dtype=float)
-        inclinacao, intercepto = np.polyfit(dias_historicos, pesos.to_numpy(dtype=float), 1)
+        datas_futuras = pd.DatetimeIndex(
+            [
+                datas_ajuste.iloc[-1] + pd.Timedelta(days=7 * semana)
+                for semana in range(1, semanas_projecao + 1)
+            ]
+        )
         dias_futuros_desde_inicio = (
-            datas_futuras - datas.iloc[0]
+            datas_futuras - datas_ajuste.iloc[0]
         ).days.to_numpy(dtype=float)
         pesos_futuros = inclinacao * dias_futuros_desde_inicio + intercepto
         ax.plot(
@@ -330,8 +349,8 @@ def gerar_grafico_semanal(df_semanal, dias_projecao=0):
     ax.set_xticks(datas_eixo)
     ax.set_xticklabels(datas_eixo.strftime('%d/%m/%Y'), rotation=45, ha='right')
     titulo = "Histórico semanal do peso"
-    if dias_projecao > 0:
-        titulo += f" com projeção linear de {dias_projecao} dias"
+    if semanas_projecao > 0:
+        titulo += f" com projeção linear de {semanas_projecao} semanas"
     ax.set_title(titulo)
     ax.set_ylabel("Peso (kg)")
     ax.set_xlabel("Data")
@@ -624,13 +643,18 @@ else:
         df_semanal = filtrar_registros_semanais(df)
         if not df_semanal.empty:
             st.pyplot(gerar_grafico_semanal(df_semanal), clear_figure=True)
-            if len(df_semanal) > 1:
+            df_semanal_completo = filtrar_marcas_semanais_completas(df_semanal)
+            if len(df_semanal_completo) > 1:
                 st.pyplot(
-                    gerar_grafico_semanal(df_semanal, dias_projecao=30),
+                    gerar_grafico_semanal(
+                        df_semanal,
+                        semanas_projecao=4,
+                        df_semanal_completo=df_semanal_completo,
+                    ),
                     clear_figure=True,
                 )
             else:
-                st.info("São necessários pelo menos dois registros para calcular a projeção linear.")
+                st.info("São necessárias pelo menos duas semanas completas para calcular a projeção linear.")
 
         df_doses = df[df['tomou_dose'] & (df['quantidade_dose'] > 0)]
         if not df_doses.empty:
