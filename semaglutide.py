@@ -280,6 +280,32 @@ def filtrar_registros_semanais(df_historico):
     return dados.loc[registros_semanais].copy()
 
 
+def gerar_grafico_semanal(df_semanal):
+    datas = pd.to_datetime(df_semanal['data_registo'])
+    pesos = df_semanal['peso']
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(datas, pesos, marker='o', color='blue', label='Peso registrado')
+    ax.set_xticks(datas)
+    ax.set_xticklabels(datas.dt.strftime('%d/%m/%Y'), rotation=45, ha='right')
+    for data, peso in zip(datas, pesos):
+        ax.annotate(
+            f"{peso:.2f} kg",
+            (data, peso),
+            xytext=(0, 8),
+            textcoords='offset points',
+            ha='center',
+        )
+    ax.set_title("Histórico semanal do peso")
+    ax.set_ylabel("Peso (kg)")
+    ax.set_xlabel("Data")
+    ax.legend()
+    ax.grid(axis='x', alpha=0.3)
+    ax.grid(axis='y', alpha=0.3)
+    ax.margins(y=0.15)
+    fig.tight_layout()
+    return fig
+
+
 def filtrar_historico(df_historico, chave="periodo_relatorio"):
     if df_historico.empty:
         return df_historico
@@ -560,21 +586,7 @@ else:
     if menu == "Gráfico semanal":
         df_semanal = filtrar_registros_semanais(df)
         if not df_semanal.empty:
-            fig, ax = plt.subplots(figsize=(10, 5))
-            ax.plot(
-                df_semanal['data_registo'],
-                df_semanal['peso'],
-                marker='o',
-                color='blue',
-                label='Peso registrado',
-            )
-            ax.set_title("Histórico semanal do peso")
-            ax.set_ylabel("Peso (kg)")
-            ax.set_xlabel("Data")
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-            fig.autofmt_xdate()
-            st.pyplot(fig, clear_figure=True)
+            st.pyplot(gerar_grafico_semanal(df_semanal), clear_figure=True)
 
         df_doses = df[df['tomou_dose'] & (df['quantidade_dose'] > 0)]
         if not df_doses.empty:
