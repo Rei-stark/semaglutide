@@ -280,13 +280,11 @@ def filtrar_registros_semanais(df_historico):
     return dados.loc[registros_semanais].copy()
 
 
-def gerar_grafico_semanal(df_semanal):
+def gerar_grafico_semanal(df_semanal, dias_projecao=0):
     datas = pd.to_datetime(df_semanal['data_registo'])
     pesos = df_semanal['peso']
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.plot(datas, pesos, marker='o', color='blue', label='Peso registrado')
-    ax.set_xticks(datas)
-    ax.set_xticklabels(datas.dt.strftime('%d/%m/%Y'), rotation=45, ha='right')
     for data, peso in zip(datas, pesos):
         ax.annotate(
             f"{peso:.2f} kg",
@@ -295,7 +293,46 @@ def gerar_grafico_semanal(df_semanal):
             textcoords='offset points',
             ha='center',
         )
-    ax.set_title("Histórico semanal do peso")
+
+    datas_eixo = datas.tolist()
+    if dias_projecao > 0 and len(datas) > 1:
+        dias_futuros = list(range(7, dias_projecao + 1, 7))
+        if dias_futuros[-1] != dias_projecao:
+            dias_futuros.append(dias_projecao)
+        datas_futuras = pd.DatetimeIndex(
+            [datas.iloc[-1] + pd.Timedelta(days=dias) for dias in dias_futuros]
+        )
+        dias_historicos = (datas - datas.iloc[0]).dt.days.to_numpy(dtype=float)
+        inclinacao, intercepto = np.polyfit(dias_historicos, pesos.to_numpy(dtype=float), 1)
+        dias_futuros_desde_inicio = (
+            datas_futuras - datas.iloc[0]
+        ).days.to_numpy(dtype=float)
+        pesos_futuros = inclinacao * dias_futuros_desde_inicio + intercepto
+        ax.plot(
+            datas_futuras,
+            pesos_futuros,
+            marker='o',
+            linestyle='--',
+            color='orange',
+            label='Projeção linear',
+        )
+        for data, peso in zip(datas_futuras, pesos_futuros):
+            ax.annotate(
+                f"{peso:.2f} kg",
+                (data, peso),
+                xytext=(0, -16),
+                textcoords='offset points',
+                ha='center',
+            )
+        datas_eixo.extend(datas_futuras.tolist())
+
+    datas_eixo = pd.DatetimeIndex(datas_eixo)
+    ax.set_xticks(datas_eixo)
+    ax.set_xticklabels(datas_eixo.strftime('%d/%m/%Y'), rotation=45, ha='right')
+    titulo = "Histórico semanal do peso"
+    if dias_projecao > 0:
+        titulo += f" com projeção linear de {dias_projecao} dias"
+    ax.set_title(titulo)
     ax.set_ylabel("Peso (kg)")
     ax.set_xlabel("Data")
     ax.legend()
@@ -587,6 +624,13 @@ else:
         df_semanal = filtrar_registros_semanais(df)
         if not df_semanal.empty:
             st.pyplot(gerar_grafico_semanal(df_semanal), clear_figure=True)
+            if len(df_semanal) > 1:
+                st.pyplot(
+                    gerar_grafico_semanal(df_semanal, dias_projecao=30),
+                    clear_figure=True,
+                )
+            else:
+                st.info("São necessários pelo menos dois registros para calcular a projeção linear.")
 
         df_doses = df[df['tomou_dose'] & (df['quantidade_dose'] > 0)]
         if not df_doses.empty:
