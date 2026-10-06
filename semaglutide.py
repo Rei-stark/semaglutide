@@ -882,6 +882,34 @@ def gerar_pdf_historico(
             tabela_pdf.scale(1, 1.2)
             salvar_grafico_a4(pdf, fig)
 
+            tabela_periodo = gerar_tabela_resumo_periodo(dados, perfil)
+            figura_periodo, ax = plt.subplots(figsize=(11.69, 8.27))
+            ax.axis('off')
+            figura_periodo.text(
+                0.08,
+                0.93,
+                "Resumo do período selecionado",
+                fontsize=18,
+                fontweight='bold',
+            )
+            figura_periodo.text(
+                0.08,
+                0.89,
+                "Valores correspondentes ao filtro de período escolhido em Estatísticas.",
+                fontsize=10,
+            )
+            tabela_periodo_pdf = ax.table(
+                cellText=tabela_periodo.values,
+                colLabels=tabela_periodo.columns,
+                loc='center',
+                cellLoc='left',
+                colWidths=[0.62, 0.38],
+                bbox=[0.05, 0.08, 0.90, 0.77],
+            )
+            tabela_periodo_pdf.auto_set_font_size(False)
+            tabela_periodo_pdf.set_fontsize(10)
+            salvar_grafico_a4(pdf, figura_periodo)
+
             tabela_variacoes = gerar_tabela_variacoes_peso(historico_completo)
             if tabela_variacoes.empty:
                 figura_variacoes, ax = plt.subplots(figsize=(11.69, 8.27))
@@ -1223,6 +1251,54 @@ def gerar_tabela_resumo_tratamento(df_historico, perfil):
     return pd.DataFrame(linhas, columns=["Indicador", "Resultado"])
 
 
+def gerar_tabela_resumo_periodo(df_historico, perfil):
+    dados = df_historico.copy()
+    dados['data_registo'] = pd.to_datetime(dados['data_registo'])
+    dados = dados.sort_values('data_registo').reset_index(drop=True)
+    pesos = dados['peso'].astype(float)
+    peso_inicio = float(pesos.iloc[0])
+    peso_atual = float(pesos.iloc[-1])
+    peso_inicial = float(perfil['peso_inicial'])
+    variacao_kg = peso_inicio - peso_atual
+    variacao_percentual = variacao_kg / peso_inicio * 100
+    registros_com_dose = dados['tomou_dose'].astype(bool)
+    doses = dados.loc[registros_com_dose, 'quantidade_dose']
+
+    def formatar_variacao(valor, unidade, casas_decimais=2):
+        if valor > 0:
+            return f"{valor:.{casas_decimais}f} {unidade} de perda"
+        if valor < 0:
+            return f"{abs(valor):.{casas_decimais}f} {unidade} de ganho"
+        return f"{0:.{casas_decimais}f} {unidade} (sem alteração)"
+
+    linhas = [
+        ("Data inicial do período", dados['data_registo'].iloc[0].strftime('%d/%m/%Y')),
+        ("Data final do período", dados['data_registo'].iloc[-1].strftime('%d/%m/%Y')),
+        ("Registros de peso", str(len(dados))),
+        ("Peso inicial do perfil", f"{peso_inicial:.2f} kg"),
+        ("Peso no início do período", f"{peso_inicio:.2f} kg"),
+        ("Peso atual no período", f"{peso_atual:.2f} kg"),
+        ("Peso médio no período", f"{pesos.mean():.2f} kg"),
+        ("Menor peso no período", f"{pesos.min():.2f} kg"),
+        ("Maior peso no período", f"{pesos.max():.2f} kg"),
+        ("Variação líquida no período", formatar_variacao(variacao_kg, "kg")),
+        (
+            "Variação percentual no período",
+            formatar_variacao(variacao_percentual, "%", 1),
+        ),
+        ("Dias com dose registrada", str(int(registros_com_dose.sum()))),
+        (
+            "Dose média nos dias com aplicação",
+            f"{float(doses.mean()):.2f} mg" if not doses.empty else "Sem doses",
+        ),
+        (
+            "Dose total no período",
+            f"{float(doses.sum()):.2f} mg",
+        ),
+    ]
+    return pd.DataFrame(linhas, columns=["Indicador", "Resultado"])
+
+
 def gerar_tabela_variacoes_peso(df_historico):
     colunas = [
         "Data da pesagem",
@@ -1272,7 +1348,7 @@ def exibir_estatisticas(df_historico, perfil):
         "de +0,10 kg."
     )
     tabela_resumo = gerar_tabela_resumo_tratamento(df_historico, perfil)
-    st.dataframe(tabela_resumo, use_container_width=True, hide_index=True)
+    st.table(tabela_resumo)
     st.download_button(
         "Baixar resumo do tratamento em CSV",
         tabela_resumo.to_csv(index=False).encode('utf-8-sig'),
