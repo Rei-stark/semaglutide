@@ -291,15 +291,27 @@ def filtrar_marcas_semanais_completas(df_semanal):
     return dados.loc[dias_desde_inicio.mod(7).eq(0)].copy()
 
 
-def gerar_grafico_semanal(df_semanal, semanas_projecao=0, df_semanal_completo=None):
+def calcular_imc(peso, altura_m):
+    return float(peso) / float(altura_m) ** 2
+
+
+def gerar_grafico_semanal(
+    df_semanal,
+    semanas_projecao=0,
+    df_semanal_completo=None,
+    altura_m=None,
+):
     datas = pd.to_datetime(df_semanal['data_registo'])
     pesos = df_semanal['peso']
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(datas, pesos, marker='o', color='blue', label='Peso registrado')
-    for data, peso in zip(datas, pesos):
+    valores = pesos if altura_m is None else pesos / float(altura_m) ** 2
+    rotulo = "Peso (kg)" if altura_m is None else "IMC"
+    nome_serie = "Peso registrado" if altura_m is None else "IMC registrado"
+    ax.plot(datas, valores, marker='o', color='blue', label=nome_serie)
+    for data, valor in zip(datas, valores):
         ax.annotate(
-            f"{peso:.2f} kg",
-            (data, peso),
+            f"{valor:.2f} kg" if altura_m is None else f"{valor:.1f}",
+            (data, valor),
             xytext=(0, 8),
             textcoords='offset points',
             ha='center',
@@ -327,18 +339,23 @@ def gerar_grafico_semanal(df_semanal, semanas_projecao=0, df_semanal_completo=No
             datas_futuras - datas_ajuste.iloc[0]
         ).days.to_numpy(dtype=float)
         pesos_futuros = inclinacao * dias_futuros_desde_inicio + intercepto
+        valores_futuros = (
+            pesos_futuros
+            if altura_m is None
+            else pesos_futuros / float(altura_m) ** 2
+        )
         ax.plot(
             datas_futuras,
-            pesos_futuros,
+            valores_futuros,
             marker='o',
             linestyle='--',
             color='orange',
             label='Projeção linear',
         )
-        for data, peso in zip(datas_futuras, pesos_futuros):
+        for data, valor in zip(datas_futuras, valores_futuros):
             ax.annotate(
-                f"{peso:.2f} kg",
-                (data, peso),
+                f"{valor:.2f} kg" if altura_m is None else f"{valor:.1f}",
+                (data, valor),
                 xytext=(0, -16),
                 textcoords='offset points',
                 ha='center',
@@ -351,8 +368,12 @@ def gerar_grafico_semanal(df_semanal, semanas_projecao=0, df_semanal_completo=No
     titulo = "Histórico semanal do peso"
     if semanas_projecao > 0:
         titulo += f" com projeção linear de {semanas_projecao} semanas"
+    if altura_m is not None:
+        titulo = "Evolução semanal do IMC"
+        if semanas_projecao > 0:
+            titulo += f" com previsão linear de {semanas_projecao} semanas"
     ax.set_title(titulo)
-    ax.set_ylabel("Peso (kg)")
+    ax.set_ylabel(rotulo)
     ax.set_xlabel("Data")
     ax.legend()
     ax.grid(axis='x', alpha=0.3)
@@ -530,11 +551,108 @@ def exibir_relatorio(df_historico, perfil):
     exibir_download_pdf(dados_filtrados, "Histórico de semaglutida", perfil, tipo='historico')
 
 
-def exibir_estatisticas(df_historico, peso_inicial):
+def gerar_tabela_diagnosticos(df_historico, perfil):
+    if df_historico.empty:
+        return pd.DataFrame(columns=["Indicador", "Resultado"])
+
+    dados = df_historico.copy()
+    dados['data_registo'] = pd.to_datetime(dados['data_registo'])
+    dados = dados.sort_values('data_registo').reset_index(drop=True)
+    variacoes = dados['peso'].astype(float).diff().dropna()
+
+    data_inicio = dados['data_registo'].iloc[0]
+    data_fim = dados['data_registo'].iloc[-1]
+    dias_em_tratamento = max((data_fim.date() - data_inicio.date()).days + 1, 1)
+    peso_inicial = float(perfil['peso_inicial'])
+    peso_atual = float(dados['peso'].iloc[-1])
+    perda_total = peso_inicial - peso_atual
+    perda_media_diaria = perda_total / dias_em_tratamento
+    variacao_percentual = perda_total / peso_inicial * 100
+
+    def formatar_variacao(valor, unidade, casas_decimais=2):
+        valor = round(valor, casas_decimais)
+        if valor > 0:
+            return f"{valor:.{casas_decimais}f} {unidade} de perda"
+        if valor < 0:
+            return f"{abs(valor):.{casas_decimais}f} {unidade} de ganho"
+        return f"{0:.{casas_decimais}f} {unidade} (sem alteração)"
+
+    linhas = [
+        ("Data de início (primeira pesagem registrada)", data_inicio.strftime('%d/%m/%Y')),
+        ("Data da última pesagem", data_fim.strftime('%d/%m/%Y')),
+        ("Dias em tratamento no período registrado", str(dias_em_tratamento)),
+        ("Peso inicial do perfil", f"{peso_inicial:.2f} kg"),
+        ("Peso da última pesagem", f"{peso_atual:.2f} kg"),
+        ("Perda de peso total", formatar_variacao(perda_total, "kg")),
+        ("Perda média por dia", formatar_variacao(perda_media_diaria, "kg/dia", 3)),
+        ("Variação desde o peso inicial", formatar_variacao(variacao_percentual, "%", 1)),
+        ("Dias com perda entre pesagens", str(int(variacoes.lt(0).sum()))),
+        ("Dias com ganho entre pesagens", str(int(variacoes.gt(0).sum()))),
+        ("Pesagens sem alteração", str(int(variacoes.eq(0).sum()))),
+        ("Pesagens registradas", str(len(dados))),
+        ("Dias com dose registrada", str(int(dados['tomou_dose'].sum()))),
+        (
+            "Dose total registrada",
+            f"{dados.loc[dados['tomou_dose'], 'quantidade_dose'].sum():.2f} mg",
+        ),
+        ("Peso médio registrado", f"{dados['peso'].mean():.2f} kg"),
+    ]
+    return pd.DataFrame(linhas, columns=["Indicador", "Resultado"])
+
+
+def exibir_diagnosticos(df_historico, perfil):
+    st.header("🔎 Diagnósticos do acompanhamento")
+    st.caption(
+        "Resumo descritivo dos registros, não é um diagnóstico clínico. "
+        "A data inicial corresponde à primeira pesagem registrada; os dias "
+        "contam o período até a última pesagem, inclusive. Perda e ganho contam "
+        "cada pesagem posterior em comparação com a pesagem anterior."
+    )
+    if df_historico.empty:
+        st.info("Ainda não há pesagens registradas para gerar o resumo.")
+        return
+
+    tabela = gerar_tabela_diagnosticos(df_historico, perfil)
+    st.dataframe(tabela, use_container_width=True, hide_index=True)
+    st.download_button(
+        "Baixar resumo em CSV",
+        tabela.to_csv(index=False).encode('utf-8-sig'),
+        file_name="resumo_diagnosticos.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
+
+def exibir_estatisticas(df_historico, perfil):
     st.header("📊 Estatísticas")
     if df_historico.empty:
         st.info("Ainda não há dados suficientes para calcular estatísticas.")
         return
+
+    peso_inicial = float(perfil['peso_inicial'])
+    altura_m = perfil.get('altura_m')
+    if altura_m is None and 'altura_m' not in perfil:
+        st.warning(
+            "Para habilitar o cálculo do IMC, atualize o banco executando "
+            "`database/migrar_altura_imc.sql` no SQL Editor do Supabase."
+        )
+    elif altura_m is None:
+        st.info("Informe sua altura para calcular o IMC.")
+        with st.form("form_altura_imc"):
+            altura_m = st.number_input(
+                "Altura (m)",
+                min_value=1.0,
+                max_value=2.5,
+                value=1.7,
+                step=0.01,
+                format="%.2f",
+            )
+            if st.form_submit_button("Salvar altura"):
+                supabase.table('utilizadores').update({
+                    'altura_m': float(altura_m),
+                }).eq('id', perfil['id']).execute()
+                st.success("Altura salva.")
+                st.rerun()
 
     dados = filtrar_historico(df_historico, chave="periodo_estatisticas")
     if dados.empty:
@@ -561,6 +679,29 @@ def exibir_estatisticas(df_historico, peso_inicial):
     col6.metric("Maior peso", f"{peso_maximo:.1f} kg")
     st.caption(f"Dose média nos dias registrados: {dose_media:.2f} mg. Peso inicial do perfil: {peso_inicial:.1f} kg.")
 
+    if altura_m is not None:
+        altura_m = float(altura_m)
+        historico_completo = df_historico.sort_values('data_registo')
+        imc_inicial = calcular_imc(peso_inicial, altura_m)
+        imc_medio = calcular_imc(
+            float(historico_completo['peso'].mean()),
+            altura_m,
+        )
+        imc_atual = calcular_imc(
+            float(historico_completo['peso'].iloc[-1]),
+            altura_m,
+        )
+        st.subheader("IMC")
+        col_imc_inicial, col_imc_medio, col_imc_atual = st.columns(3)
+        col_imc_inicial.metric("IMC inicial", f"{imc_inicial:.1f}")
+        col_imc_medio.metric("IMC médio", f"{imc_medio:.1f}")
+        col_imc_atual.metric("IMC atual", f"{imc_atual:.1f}")
+        st.caption(
+            "IMC inicial calculado pelo peso inicial do perfil; média e valor atual "
+            "usam todo o histórico registrado. O IMC é um indicador geral e não "
+            "substitui avaliação profissional."
+        )
+
     st.subheader("Evolução do peso no período")
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.plot(dados['data_registo'], dados['peso'], marker='o', color='#1f77b4', label='Peso registrado')
@@ -573,6 +714,38 @@ def exibir_estatisticas(df_historico, peso_inicial):
     fig.autofmt_xdate()
     st.pyplot(fig, clear_figure=True)
 
+    historico_semanal = filtrar_registros_semanais(df_historico)
+    marcas_semanais_completas = filtrar_marcas_semanais_completas(historico_semanal)
+    semanas_previsao = 4 if len(marcas_semanais_completas) > 1 else 0
+    st.subheader("Evolução semanal do peso com previsão")
+    st.caption("Este gráfico considera todo o histórico, independentemente do filtro de período acima.")
+    st.pyplot(
+        gerar_grafico_semanal(
+            historico_semanal,
+            semanas_projecao=semanas_previsao,
+            df_semanal_completo=marcas_semanais_completas,
+        ),
+        clear_figure=True,
+    )
+    if semanas_previsao == 0:
+        st.info("São necessárias pelo menos duas semanas completas para calcular a previsão linear.")
+
+    if altura_m is not None:
+        st.subheader("Evolução semanal do IMC com previsão")
+        st.pyplot(
+            gerar_grafico_semanal(
+                historico_semanal,
+                semanas_projecao=semanas_previsao,
+                df_semanal_completo=marcas_semanais_completas,
+                altura_m=altura_m,
+            ),
+            clear_figure=True,
+        )
+        st.caption(
+            "A previsão prolonga linearmente a tendência semanal observada; "
+            "não é uma previsão clínica nem considera mudanças futuras."
+        )
+
     st.subheader("Doses no período")
     dados_doses = dados[dados['tomou_dose'] & (dados['quantidade_dose'] > 0)]
     if dados_doses.empty:
@@ -580,6 +753,14 @@ def exibir_estatisticas(df_historico, peso_inicial):
     else:
         st.pyplot(gerar_grafico_doses(dados), clear_figure=True)
     exibir_download_pdf(dados, "Estatísticas do tratamento com semaglutida", perfil, tipo='estatisticas', peso_inicial=peso_inicial)
+
+    with st.expander("Sugestões para novas estatísticas"):
+        st.markdown(
+            "- **Circunferência abdominal:** acompanhar mudanças além do peso e do IMC.\n"
+            "- **Adesão às doses:** visualizar doses previstas e registradas por mês.\n"
+            "- **Ritmo e estabilidade:** mostrar variação semanal/mensal e identificar platôs.\n"
+            "- **Marcos de progresso:** registrar metas pessoais e a evolução até cada marco."
+        )
 
 # --- 4. INTERFACE DO UTILIZADOR (FRONTEND) ---
 st.title("📉 Acompanhamento com IA - Semaglutida")
@@ -603,7 +784,10 @@ with st.sidebar:
         st.markdown(f"**Data de nascimento:** {nascimento_formatado}")
     else:
         st.caption("Perfil ainda não preenchido")
-    menu = st.radio("Menu", ["Acompanhamento", "Gráfico semanal", "Estatísticas", "Histórico"])
+    menu = st.radio(
+        "Menu",
+        ["Acompanhamento", "Gráfico semanal", "Estatísticas", "Diagnósticos", "Histórico"],
+    )
     st.caption("Desenvolvido por Reinaldo Galvão")
     if st.button("Sair", use_container_width=True):
         supabase.auth.sign_out()
@@ -619,11 +803,20 @@ if not perfil:
         nascimento = st.date_input("Data de nascimento", min_value=date(1940, 1, 1), max_value=date.today())
         sexo = st.selectbox("Sexo", ["Feminino", "Masculino"])
         peso_ini = st.number_input("Peso inicial (kg)", min_value=30.0, max_value=250.0, step=0.05)
+        altura_m = st.number_input(
+            "Altura (m)",
+            min_value=1.0,
+            max_value=2.5,
+            value=1.7,
+            step=0.01,
+            format="%.2f",
+        )
 
         if st.form_submit_button("Criar Perfil"):
             supabase.table('utilizadores').insert({
                 'id': user.id, 'email': user.email, 'nome': nome,
-                'data_nascimento': str(nascimento), 'sexo': sexo, 'peso_inicial': peso_ini
+                'data_nascimento': str(nascimento), 'sexo': sexo,
+                'peso_inicial': peso_ini, 'altura_m': altura_m,
             }).execute()
             st.success("Perfil criado com sucesso.")
             st.rerun()
@@ -636,8 +829,11 @@ else:
     if menu == "Histórico":
         exibir_relatorio(df, perfil)
         st.stop()
+    if menu == "Diagnósticos":
+        exibir_diagnosticos(df, perfil)
+        st.stop()
     if menu == "Estatísticas":
-        exibir_estatisticas(df, perfil['peso_inicial'])
+        exibir_estatisticas(df, perfil)
         st.stop()
     if menu == "Gráfico semanal":
         df_semanal = filtrar_registros_semanais(df)

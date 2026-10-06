@@ -1,6 +1,6 @@
 # Semaglutida
 
-Aplicação Streamlit para acompanhar peso e registros de dose de semaglutida, com uma projeção estatística baseada no histórico do usuário.
+Aplicação Streamlit para acompanhar peso e registros de dose de semaglutida, com projeções estatísticas, evolução do IMC e um resumo descritivo do acompanhamento.
 
 ## Requisitos
 
@@ -25,6 +25,7 @@ Edite `.streamlit/secrets.toml` com os valores do seu projeto Supabase e defina 
 3. No Google Cloud, use `https://SEU_PROJETO.supabase.co/auth/v1/callback` como redirect URI autorizado.
 4. No Supabase, configure a Site URL e adicione o valor de `APP_URL` às Redirect URLs.
 5. Como o banco já tem dados, faça um backup e execute `database/migrate_google_auth.sql` no SQL Editor do Supabase. Para uma base nova, execute `database/schema.sql`.
+6. Em uma base existente, execute também `database/migrar_altura_imc.sql` no SQL Editor do Supabase. Os usuários informarão a altura na página Estatísticas; para uma base nova, a coluna já está em `database/schema.sql`.
 
 O `APP_URL` deve ser exatamente a URL acessível pelo navegador, incluindo o protocolo e a porta. Em produção, use HTTPS.
 
@@ -43,6 +44,7 @@ A aplicação abre por padrão em `http://localhost:8501`.
 - `.streamlit/secrets.toml.example`: modelo de configuração local
 - `database/schema.sql`: tabelas e políticas RLS necessárias no Supabase
 - `database/migrate_google_auth.sql`: migração dos perfis e registros existentes para os UUIDs do Google
+- `database/migrar_altura_imc.sql`: adiciona a altura do perfil, necessária para calcular o IMC
 - `database/corrigir_doses.sql`: correção das doses antigas de 2,5 para 0,25 mg e 5,0 para 0,5 mg
 - `Semaglutida.ipynb`: notebook original
 

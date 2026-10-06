@@ -5,6 +5,7 @@ create table if not exists public.utilizadores (
     data_nascimento date not null,
     sexo text not null check (sexo in ('Feminino', 'Masculino')),
     peso_inicial numeric(5, 2) not null check (peso_inicial between 30 and 250),
+    altura_m numeric(3, 2) not null check (altura_m between 1.00 and 2.50),
     created_at timestamptz not null default now()
 );
 
