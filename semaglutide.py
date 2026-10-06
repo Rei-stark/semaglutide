@@ -6,12 +6,19 @@ from io import BytesIO
 from matplotlib.backends.backend_pdf import PdfPages
 from supabase import create_client
 from supabase.lib.client_options import SyncClientOptions
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import HuberRegressor, LogisticRegression, Ridge
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVR
-from sklearn.metrics import confusion_matrix, mean_absolute_error
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    mean_absolute_error,
+    mean_squared_error,
+    precision_recall_fscore_support,
+    roc_auc_score,
+)
 from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
@@ -209,6 +216,10 @@ def criar_modelos_regressao():
             StandardScaler(),
             SVR(kernel='rbf', C=10.0, gamma='scale', epsilon=0.1),
         ),
+        "Huber": make_pipeline(
+            StandardScaler(),
+            HuberRegressor(),
+        ),
     }
 
 
@@ -222,10 +233,8 @@ def gerar_predicao_ml(df_historico, peso_inicial):
     y = df_historico['peso']
 
     modelos = criar_modelos_regressao()
-    modelo_ridge = modelos["Ridge"]
-    modelo_svr = modelos["SVR"]
-    modelo_ridge.fit(X, y)
-    modelo_svr.fit(X, y)
+    for modelo in modelos.values():
+        modelo.fit(X, y)
     
     ultimo_dia = df_historico['Dias_Tratamento'].max()
     dias_alvo = np.array([10, 20, 30])
@@ -235,68 +244,79 @@ def gerar_predicao_ml(df_historico, peso_inicial):
     )
     dias_grafico_df = pd.DataFrame({'Dias_Tratamento': dias_grafico})
     dias_alvo_df = pd.DataFrame({'Dias_Tratamento': ultimo_dia + dias_alvo})
-    predicoes_ridge_grafico = modelo_ridge.predict(dias_grafico_df)
-    predicoes_svr_grafico = modelo_svr.predict(dias_grafico_df)
-    predicoes_ridge = modelo_ridge.predict(dias_alvo_df)
-    predicoes_svr = modelo_svr.predict(dias_alvo_df)
+    predicoes_grafico = {
+        nome: modelo.predict(dias_grafico_df)
+        for nome, modelo in modelos.items()
+    }
+    predicoes_alvo = {
+        nome: modelo.predict(dias_alvo_df)
+        for nome, modelo in modelos.items()
+    }
     peso_atual = float(df_historico['peso'].iloc[-1])
     perda_atual = ((peso_inicial - peso_atual) / peso_inicial) * 100
     projecoes = {
         int(dias): {
-            'peso': float(peso_ridge),
-            'perda': float(((peso_inicial - peso_ridge) / peso_inicial) * 100),
-            'peso_svr': float(peso_svr),
-            'perda_svr': float(((peso_inicial - peso_svr) / peso_inicial) * 100),
+            'peso': float(predicoes_alvo["Ridge"][indice]),
+            'perda': float(
+                ((peso_inicial - predicoes_alvo["Ridge"][indice]) / peso_inicial) * 100
+            ),
+            **{
+                f'peso_{nome.lower()}': float(predicoes_alvo[nome][indice])
+                for nome in ("SVR", "Huber")
+            },
+            **{
+                f'perda_{nome.lower()}': float(
+                    ((peso_inicial - predicoes_alvo[nome][indice]) / peso_inicial) * 100
+                )
+                for nome in ("SVR", "Huber")
+            },
         }
-        for dias, peso_ridge, peso_svr in zip(dias_alvo, predicoes_ridge, predicoes_svr)
+        for indice, dias in enumerate(dias_alvo)
     }
     
     # Geração do Gráfico
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.scatter(df_historico['data_registo'], y, color='black', label='Peso real', zorder=5)
-    ax.plot(
-        df_historico['data_registo'],
-        modelo_ridge.predict(X),
-        color='blue',
-        linestyle='--',
-        alpha=0.8,
-        label='Ridge Polynomial',
+    estilos_modelos = {
+        "Ridge": ("blue", "Ridge polinomial"),
+        "SVR": ("green", "SVR (RBF)"),
+        "Huber": ("#d97706", "Huber (candidato)"),
+    }
+    datas_alvo = df_historico['data_registo'].max() + pd.to_timedelta(
+        dias_alvo,
+        unit='D',
     )
-    ax.plot(
-        df_historico['data_registo'],
-        modelo_svr.predict(X),
-        color='green',
-        linestyle='--',
-        alpha=0.8,
-        label='SVR (RBF)',
-    )
-    ax.plot(datas_grafico, predicoes_ridge_grafico, color='blue', linestyle='--', linewidth=2)
-    ax.plot(datas_grafico, predicoes_svr_grafico, color='green', linestyle='--', linewidth=2)
-    ax.scatter(
-        df_historico['data_registo'].max() + pd.to_timedelta(dias_alvo, unit='D'),
-        predicoes_ridge,
-        color='blue',
-        zorder=5,
-        label='Ridge: pontos de 10, 20 e 30 dias',
-    )
-    ax.scatter(
-        df_historico['data_registo'].max() + pd.to_timedelta(dias_alvo, unit='D'),
-        predicoes_svr,
-        color='green',
-        zorder=5,
-        label='SVR: pontos de 10, 20 e 30 dias',
-    )
+    for nome, modelo in modelos.items():
+        cor, rotulo = estilos_modelos[nome]
+        ax.plot(
+            df_historico['data_registo'],
+            modelo.predict(X),
+            color=cor,
+            linestyle='--',
+            alpha=0.8,
+            label=rotulo,
+        )
+        ax.plot(
+            datas_grafico,
+            predicoes_grafico[nome],
+            color=cor,
+            linestyle='--',
+            linewidth=2,
+        )
+        ax.scatter(
+            datas_alvo,
+            predicoes_alvo[nome],
+            color=cor,
+            zorder=5,
+            label=f'{nome}: pontos de 10, 20 e 30 dias',
+        )
     
     ax.set_title("Evolução e projeção do peso")
     ax.set_ylabel("Peso (kg)")
     ax.legend()
     ax.grid(True, alpha=0.3)
     
-    erros = {
-        'ridge': mean_absolute_error(y, modelo_ridge.predict(X)),
-        'svr': mean_absolute_error(y, modelo_svr.predict(X)),
-    }
-    return fig, peso_atual, perda_atual, projecoes, erros
+    return fig, peso_atual, perda_atual, projecoes
 
 
 def classificar_variacao_peso(variacao_kg):
@@ -307,7 +327,7 @@ def classificar_variacao_peso(variacao_kg):
     return "Estável"
 
 
-def avaliar_matrizes_confusao_ml(df_historico):
+def avaliar_regressores_ml(df_historico):
     if len(df_historico) < MIN_REGISTROS_AVALIACAO_ML:
         return None
 
@@ -318,76 +338,248 @@ def avaliar_matrizes_confusao_ml(df_historico):
     X = dados[['Dias_Tratamento']]
     y = dados['peso'].astype(float)
 
-    classes_reais = []
-    classes_previstas = {nome: [] for nome in ("Ridge", "SVR")}
+    pesos_reais = []
+    pesos_previstos = {nome: [] for nome in criar_modelos_regressao()}
+    pesos_baseline = []
     for indice_teste in range(MIN_REGISTROS_TREINO_ML, len(dados)):
-        peso_anterior = float(y.iloc[indice_teste - 1])
-        peso_real = float(y.iloc[indice_teste])
-        classes_reais.append(
-            classificar_variacao_peso(peso_real - peso_anterior)
-        )
-
+        pesos_reais.append(float(y.iloc[indice_teste]))
+        pesos_baseline.append(float(y.iloc[indice_teste - 1]))
         for nome_modelo, modelo in criar_modelos_regressao().items():
             modelo.fit(X.iloc[:indice_teste], y.iloc[:indice_teste])
-            peso_previsto = float(
+            pesos_previstos[nome_modelo].append(float(
                 modelo.predict(X.iloc[[indice_teste]])[0]
-            )
-            classes_previstas[nome_modelo].append(
-                classificar_variacao_peso(peso_previsto - peso_anterior)
-            )
+            ))
 
-    matrizes = {
-        nome_modelo: pd.DataFrame(
-            confusion_matrix(
-                classes_reais,
-                classes_modelo,
-                labels=CLASSES_VARIACAO_PESO,
-            ),
-            index=CLASSES_VARIACAO_PESO,
-            columns=CLASSES_VARIACAO_PESO,
-        )
-        for nome_modelo, classes_modelo in classes_previstas.items()
-    }
-    acuracias = {
-        nome_modelo: float(np.trace(matriz.to_numpy()) / len(classes_reais))
-        for nome_modelo, matriz in matrizes.items()
-    }
+    def calcular_erros(valores_previstos):
+        return {
+            "mae": float(mean_absolute_error(pesos_reais, valores_previstos)),
+            "rmse": float(np.sqrt(mean_squared_error(pesos_reais, valores_previstos))),
+        }
+
     return {
-        "matrizes": matrizes,
-        "acuracias": acuracias,
-        "quantidade_avaliacoes": len(classes_reais),
+        "modelos": {
+            nome: calcular_erros(valores)
+            for nome, valores in pesos_previstos.items()
+        },
+        "baseline": calcular_erros(pesos_baseline),
+        "quantidade_avaliacoes": len(pesos_reais),
     }
 
 
-def gerar_grafico_matrizes_confusao(avaliacao):
-    fig, eixos = plt.subplots(1, 2, figsize=(10, 4.5))
-    for eixo, nome_modelo in zip(eixos, ("Ridge", "SVR")):
-        matriz = avaliacao["matrizes"][nome_modelo]
-        eixo.imshow(matriz.to_numpy(), cmap="Blues")
-        eixo.set_title(
-            f"{nome_modelo} — acurácia "
-            f"{avaliacao['acuracias'][nome_modelo]:.1%}"
-        )
-        eixo.set_xticks(range(len(CLASSES_VARIACAO_PESO)))
-        eixo.set_xticklabels(CLASSES_VARIACAO_PESO)
-        eixo.set_yticks(range(len(CLASSES_VARIACAO_PESO)))
-        eixo.set_yticklabels(CLASSES_VARIACAO_PESO)
-        eixo.set_xlabel("Classe prevista")
-        eixo.set_ylabel("Classe real")
-        for linha in range(len(CLASSES_VARIACAO_PESO)):
-            for coluna in range(len(CLASSES_VARIACAO_PESO)):
-                eixo.text(
-                    coluna,
-                    linha,
-                    str(int(matriz.iloc[linha, coluna])),
-                    ha="center",
-                    va="center",
-                    color="black",
-                )
+def avaliar_classificador_tendencia_ml(df_historico):
+    if len(df_historico) < MIN_REGISTROS_AVALIACAO_ML:
+        return None
 
-    fig.suptitle("Matriz de confusão — validação cronológica")
+    dados = df_historico.copy().sort_values('data_registo')
+    dados['data_registo'] = pd.to_datetime(dados['data_registo'])
+    pesos = dados['peso'].astype(float).to_numpy()
+    dias = (dados['data_registo'] - dados['data_registo'].iloc[0]).dt.days.to_numpy()
+    datas = dados['data_registo'].to_numpy()
+
+    linhas_features = []
+    classes_reais = []
+    for indice in range(1, len(dados)):
+        variacoes_anteriores = np.diff(pesos[:indice])
+        variacoes_recentes = variacoes_anteriores[-3:]
+        intervalo_anterior = (
+            float((datas[indice - 1] - datas[indice - 2]) / np.timedelta64(1, 'D'))
+            if indice > 1
+            else 0.0
+        )
+        linhas_features.append([
+            float(dias[indice - 1]),
+            float(variacoes_anteriores[-1]) if len(variacoes_anteriores) else 0.0,
+            float(np.mean(variacoes_recentes)) if len(variacoes_recentes) else 0.0,
+            intervalo_anterior,
+        ])
+        classes_reais.append(
+            classificar_variacao_peso(pesos[indice] - pesos[indice - 1])
+        )
+
+    X = np.asarray(linhas_features, dtype=float)
+    y = np.asarray(classes_reais, dtype=object)
+    classes_previstas = []
+    reais_avaliados = []
+    scores_auc = []
+    classes_auc = []
+    classes_baseline = []
+
+    for indice_teste in range(MIN_REGISTROS_TREINO_ML - 1, len(y)):
+        classes_treino = y[:indice_teste]
+        if len(np.unique(classes_treino)) < 2:
+            continue
+
+        modelo = make_pipeline(
+            StandardScaler(),
+            LogisticRegression(class_weight="balanced", max_iter=1000),
+        )
+        modelo.fit(X[:indice_teste], classes_treino)
+        classe_prevista = str(modelo.predict(X[[indice_teste]])[0])
+        classes_previstas.append(classe_prevista)
+        reais_avaliados.append(str(y[indice_teste]))
+        classes_baseline.append(str(y[indice_teste - 1]))
+
+        classificador = modelo.named_steps["logisticregression"]
+        if all(classe in classificador.classes_ for classe in CLASSES_VARIACAO_PESO):
+            probabilidades = modelo.predict_proba(X[[indice_teste]])[0]
+            scores_auc.append([
+                float(probabilidades[list(classificador.classes_).index(classe)])
+                for classe in CLASSES_VARIACAO_PESO
+            ])
+            classes_auc.append(str(y[indice_teste]))
+
+    if not reais_avaliados:
+        return None
+
+    matriz = pd.DataFrame(
+        confusion_matrix(
+            reais_avaliados,
+            classes_previstas,
+            labels=CLASSES_VARIACAO_PESO,
+        ),
+        index=CLASSES_VARIACAO_PESO,
+        columns=CLASSES_VARIACAO_PESO,
+    )
+    precisao, recall, f1, suporte = precision_recall_fscore_support(
+        reais_avaliados,
+        classes_previstas,
+        labels=CLASSES_VARIACAO_PESO,
+        zero_division=0,
+    )
+    metricas_por_classe = pd.DataFrame({
+        "Classe": CLASSES_VARIACAO_PESO,
+        "Precisão": precisao,
+        "Recall": recall,
+        "F1-score": f1,
+        "Suporte": suporte,
+    })
+    metricas = {
+        "acuracia": float(accuracy_score(reais_avaliados, classes_previstas)),
+        "precisao_macro": float(np.mean(precisao)),
+        "recall_macro": float(np.mean(recall)),
+        "f1_macro": float(np.mean(f1)),
+        "acuracia_baseline": float(accuracy_score(reais_avaliados, classes_baseline)),
+        "auc_roc_macro_ovr": None,
+        "quantidade_auc": len(classes_auc),
+    }
+    auc_classes_presentes = set(classes_auc)
+    if (
+        scores_auc
+        and all(classe in auc_classes_presentes for classe in CLASSES_VARIACAO_PESO)
+    ):
+        matriz_auc = np.asarray(scores_auc)
+        auc_por_classe = [
+            roc_auc_score(
+                np.asarray(classes_auc) == classe,
+                matriz_auc[:, indice],
+            )
+            for indice, classe in enumerate(CLASSES_VARIACAO_PESO)
+        ]
+        metricas["auc_roc_macro_ovr"] = float(np.mean(auc_por_classe))
+
+    return {
+        "matriz": matriz,
+        "metricas": metricas,
+        "metricas_por_classe": metricas_por_classe,
+        "quantidade_avaliacoes": len(reais_avaliados),
+    }
+
+
+def gerar_grafico_matriz_confusao(avaliacao):
+    fig, eixo = plt.subplots(figsize=(6, 5))
+    matriz = avaliacao["matriz"]
+    eixo.imshow(matriz.to_numpy(), cmap='Blues')
+    eixo.set_title(
+        "LogisticRegression — matriz de confusão\n"
+        f"Acurácia: {avaliacao['metricas']['acuracia']:.1%}"
+    )
+    eixo.set_xticks(range(len(CLASSES_VARIACAO_PESO)))
+    eixo.set_xticklabels(CLASSES_VARIACAO_PESO)
+    eixo.set_yticks(range(len(CLASSES_VARIACAO_PESO)))
+    eixo.set_yticklabels(CLASSES_VARIACAO_PESO)
+    eixo.set_xlabel("Classe prevista")
+    eixo.set_ylabel("Classe real")
+    for linha in range(len(CLASSES_VARIACAO_PESO)):
+        for coluna in range(len(CLASSES_VARIACAO_PESO)):
+            eixo.text(
+                coluna,
+                linha,
+                str(int(matriz.iloc[linha, coluna])),
+                ha="center",
+                va="center",
+                color="black",
+            )
     fig.tight_layout()
     return fig
+
+
+def gerar_grafico_metricas_regressao(avaliacao):
+    linhas = [
+        [
+            "Huber (candidato)" if nome == "Huber" else nome,
+            f"{metricas['mae']:.3f} kg",
+            f"{metricas['rmse']:.3f} kg",
+        ]
+        for nome, metricas in avaliacao["modelos"].items()
+    ]
+    linhas.append([
+        "Persistência (último peso)",
+        f"{avaliacao['baseline']['mae']:.3f} kg",
+        f"{avaliacao['baseline']['rmse']:.3f} kg",
+    ])
+    fig, eixo = plt.subplots(figsize=(9, 3.5))
+    eixo.axis('off')
+    eixo.set_title(
+        f"Validação cronológica da regressão — "
+        f"{avaliacao['quantidade_avaliacoes']} previsões"
+    )
+    tabela = eixo.table(
+        cellText=linhas,
+        colLabels=["Modelo", "MAE", "RMSE"],
+        loc='center',
+        cellLoc='center',
+        bbox=[0.02, 0.08, 0.96, 0.78],
+    )
+    tabela.auto_set_font_size(False)
+    tabela.set_fontsize(10)
+    return fig
+
+
+def criar_tabela_metricas_regressao(avaliacao):
+    linhas = [
+        {
+            "Modelo": "Huber (candidato)" if nome == "Huber" else nome,
+            "MAE (kg)": round(metricas["mae"], 3),
+            "RMSE (kg)": round(metricas["rmse"], 3),
+        }
+        for nome, metricas in avaliacao["modelos"].items()
+    ]
+    linhas.append({
+        "Modelo": "Persistência (último peso)",
+        "MAE (kg)": round(avaliacao["baseline"]["mae"], 3),
+        "RMSE (kg)": round(avaliacao["baseline"]["rmse"], 3),
+    })
+    return pd.DataFrame(linhas)
+
+
+def criar_tabelas_metricas_classificacao(avaliacao):
+    metricas = avaliacao["metricas"]
+    auc = metricas["auc_roc_macro_ovr"]
+    resumo = pd.DataFrame([{
+        "Modelo": "LogisticRegression",
+        "Acurácia": f"{metricas['acuracia']:.1%}",
+        "Precisão macro": f"{metricas['precisao_macro']:.1%}",
+        "Recall macro": f"{metricas['recall_macro']:.1%}",
+        "F1-score macro": f"{metricas['f1_macro']:.1%}",
+        "AUC-ROC macro OvR": f"{auc:.1%}" if auc is not None else "Indisponível",
+        "Nº usados no AUC": metricas["quantidade_auc"],
+        "Baseline persistente": f"{metricas['acuracia_baseline']:.1%}",
+        "Nº validações": avaliacao["quantidade_avaliacoes"],
+    }])
+    por_classe = avaliacao["metricas_por_classe"].copy()
+    for coluna in ("Precisão", "Recall", "F1-score"):
+        por_classe[coluna] = por_classe[coluna].map(lambda valor: f"{valor:.1%}")
+    return resumo, por_classe
 
 
 def gerar_grafico_doses(df_historico):
@@ -561,7 +753,8 @@ def gerar_pdf_historico(
     peso_inicial=None,
     altura_m=None,
     df_historico_completo=None,
-    avaliacao_matrizes=None,
+    avaliacao_regressoes=None,
+    avaliacao_classificacao=None,
 ):
     dados = df_historico.copy()
     dados['data_registo'] = pd.to_datetime(dados['data_registo'])
@@ -618,7 +811,7 @@ def gerar_pdf_historico(
         plt.close(fig)
 
         if tipo == 'acompanhamento' and len(dados) > 3:
-            figura, _, _, _, _ = gerar_predicao_ml(dados, peso_inicial)
+            figura, _, _, _ = gerar_predicao_ml(dados, peso_inicial)
             salvar_grafico_a4(pdf, figura)
         elif tipo == 'estatisticas':
             tabela_resumo = gerar_tabela_resumo_tratamento(
@@ -673,6 +866,50 @@ def gerar_pdf_historico(
             tabela_pdf.scale(1, 1.2)
             salvar_grafico_a4(pdf, fig)
 
+            tabela_variacoes = gerar_tabela_variacoes_peso(historico_completo)
+            if tabela_variacoes.empty:
+                figura_variacoes, ax = plt.subplots(figsize=(11.69, 8.27))
+                ax.axis('off')
+                ax.text(
+                    0.5,
+                    0.55,
+                    "São necessárias pelo menos duas pesagens para "
+                    "classificar perda, ganho ou estabilidade.",
+                    ha='center',
+                    wrap=True,
+                )
+                salvar_grafico_a4(pdf, figura_variacoes)
+            else:
+                for inicio in range(0, len(tabela_variacoes), 25):
+                    pagina_variacoes = tabela_variacoes.iloc[inicio:inicio + 25]
+                    figura_variacoes, ax = plt.subplots(figsize=(11.69, 8.27))
+                    ax.axis('off')
+                    figura_variacoes.text(
+                        0.08,
+                        0.93,
+                        "Datas e variações entre pesagens",
+                        fontsize=18,
+                        fontweight='bold',
+                    )
+                    figura_variacoes.text(
+                        0.08,
+                        0.89,
+                        "Variação = peso registrado menos peso anterior; estável "
+                        "significa diferença igual a 0,00 kg.",
+                        fontsize=10,
+                    )
+                    tabela_pdf = ax.table(
+                        cellText=pagina_variacoes.values,
+                        colLabels=pagina_variacoes.columns,
+                        loc='center',
+                        cellLoc='center',
+                        colWidths=[0.20, 0.20, 0.20, 0.16, 0.18],
+                        bbox=[0.04, 0.04, 0.92, 0.80],
+                    )
+                    tabela_pdf.auto_set_font_size(False)
+                    tabela_pdf.set_fontsize(9)
+                    salvar_grafico_a4(pdf, figura_variacoes)
+
             fig, ax = plt.subplots(figsize=(11.69, 8.27))
             fig.subplots_adjust(left=0.10, right=0.95, top=0.88, bottom=0.16)
             ax.plot(dados['data_registo'], dados['peso'], marker='o', color='#1f77b4', label='Peso registrado')
@@ -706,7 +943,7 @@ def gerar_pdf_historico(
                 salvar_grafico_a4(pdf, figura_imc_semanal)
 
             if len(historico_completo) > 3:
-                figura_predicao, _, _, _, _ = gerar_predicao_ml(
+                figura_predicao, _, _, _ = gerar_predicao_ml(
                     historico_completo,
                     peso_inicial,
                 )
@@ -723,26 +960,23 @@ def gerar_pdf_historico(
                 figura_doses = gerar_grafico_doses(dados)
                 salvar_grafico_a4(pdf, figura_doses)
 
-            avaliacao_ml = (
-                avaliar_matrizes_confusao_ml(historico_completo)
-                if avaliacao_matrizes is None
-                else avaliacao_matrizes
+            metricas_regressao = (
+                avaliar_regressores_ml(historico_completo)
+                if avaliacao_regressoes is None
+                else avaliacao_regressoes
             )
-            if avaliacao_ml is not None:
-                figura_matrizes = gerar_grafico_matrizes_confusao(avaliacao_ml)
-                figura_matrizes.text(
-                    0.01,
-                    0.01,
-                    "Validação cronológica; estabilidade definida como variação de até ±0,10 kg.",
-                    fontsize=8,
+            if metricas_regressao is not None:
+                salvar_grafico_a4(
+                    pdf,
+                    gerar_grafico_metricas_regressao(metricas_regressao),
                 )
             else:
-                figura_matrizes, ax = plt.subplots(figsize=(10, 5))
+                figura_regressao, ax = plt.subplots(figsize=(10, 5))
                 ax.axis('off')
                 ax.text(
                     0.5,
                     0.6,
-                    "Matriz de confusão ainda indisponível",
+                    "Métricas de regressão ainda indisponíveis",
                     ha='center',
                     fontsize=16,
                     fontweight='bold',
@@ -750,12 +984,89 @@ def gerar_pdf_historico(
                 ax.text(
                     0.5,
                     0.4,
-                    "São necessárias pelo menos seis pesagens para obter "
-                    "duas previsões fora do treino inicial.",
+                    "São necessárias pelo menos seis pesagens para comparar "
+                    "os modelos com validação cronológica.",
                     ha='center',
                     wrap=True,
                 )
-            salvar_grafico_a4(pdf, figura_matrizes)
+                salvar_grafico_a4(pdf, figura_regressao)
+
+            avaliacao_ml = (
+                avaliar_classificador_tendencia_ml(historico_completo)
+                if avaliacao_classificacao is None
+                else avaliacao_classificacao
+            )
+            if avaliacao_ml is not None:
+                resumo_ml, por_classe_ml = criar_tabelas_metricas_classificacao(
+                    avaliacao_ml
+                )
+                figura_metricas, eixos = plt.subplots(
+                    2,
+                    1,
+                    figsize=(11.69, 8.27),
+                    gridspec_kw={"height_ratios": [1, 1.2]},
+                )
+                figura_metricas.suptitle(
+                    "Métricas de classificação da tendência",
+                    fontsize=18,
+                    fontweight='bold',
+                )
+                eixos[0].axis('off')
+                linhas_resumo = [
+                    (nome, valor)
+                    for nome, valor in resumo_ml.iloc[0].items()
+                ]
+                eixos[0].table(
+                    cellText=linhas_resumo,
+                    colLabels=["Métrica", "Resultado"],
+                    loc='center',
+                    cellLoc='center',
+                    bbox=[0.15, 0.02, 0.70, 0.92],
+                ).set_fontsize(10)
+                eixos[1].axis('off')
+                eixos[1].set_title("Métricas por classe", fontsize=12)
+                eixos[1].table(
+                    cellText=por_classe_ml.values,
+                    colLabels=por_classe_ml.columns,
+                    loc='center',
+                    cellLoc='center',
+                    bbox=[0.08, 0.10, 0.84, 0.78],
+                ).set_fontsize(10)
+                figura_metricas.text(
+                    0.5,
+                    0.015,
+                    "AUC-ROC macro OvR usa previsões fora da amostra em que todas "
+                    "as classes estavam disponíveis no treino.",
+                    ha='center',
+                    fontsize=8,
+                )
+                figura_metricas.tight_layout(rect=[0, 0.04, 1, 0.95])
+                salvar_grafico_a4(pdf, figura_metricas)
+
+                salvar_grafico_a4(
+                    pdf,
+                    gerar_grafico_matriz_confusao(avaliacao_ml),
+                )
+            else:
+                figura_classificacao, ax = plt.subplots(figsize=(10, 5))
+                ax.axis('off')
+                ax.text(
+                    0.5,
+                    0.6,
+                    "Avaliação de classificação ainda indisponível",
+                    ha='center',
+                    fontsize=16,
+                    fontweight='bold',
+                )
+                ax.text(
+                    0.5,
+                    0.4,
+                    "São necessárias pelo menos seis pesagens e variação "
+                    "suficiente para treinar o classificador.",
+                    ha='center',
+                    wrap=True,
+                )
+                salvar_grafico_a4(pdf, figura_classificacao)
         else:
             for inicio in range(0, len(tabela), 25):
                 pagina = tabela.iloc[inicio:inicio + 25]
@@ -785,7 +1096,8 @@ def exibir_download_pdf(
     peso_inicial=None,
     altura_m=None,
     df_historico_completo=None,
-    avaliacao_matrizes=None,
+    avaliacao_regressoes=None,
+    avaliacao_classificacao=None,
 ):
     if not df_historico.empty:
         st.download_button(
@@ -798,7 +1110,8 @@ def exibir_download_pdf(
                 peso_inicial,
                 altura_m,
                 df_historico_completo,
-                avaliacao_matrizes,
+                avaliacao_regressoes,
+                avaliacao_classificacao,
             ),
             file_name="relatorio_semaglutida.pdf",
             mime="application/pdf",
@@ -880,9 +1193,9 @@ def gerar_tabela_resumo_tratamento(df_historico, perfil):
         ("Perda de peso total", formatar_variacao(perda_total, "kg")),
         ("Perda média por dia", formatar_variacao(perda_media_diaria, "kg/dia", 3)),
         ("Variação desde o peso inicial", formatar_variacao(variacao_percentual, "%", 1)),
-        ("Dias com perda entre pesagens", str(int(variacoes.lt(0).sum()))),
-        ("Dias com ganho entre pesagens", str(int(variacoes.gt(0).sum()))),
-        ("Pesagens sem alteração", str(int(variacoes.eq(0).sum()))),
+        ("Intervalos com perda", str(int(variacoes.lt(0).sum()))),
+        ("Intervalos com ganho", str(int(variacoes.gt(0).sum()))),
+        ("Intervalos estáveis (peso igual)", str(int(variacoes.eq(0).sum()))),
         ("Dias com dose registrada", str(int(dados['tomou_dose'].sum()))),
         (
             "Dose total registrada",
@@ -891,6 +1204,42 @@ def gerar_tabela_resumo_tratamento(df_historico, perfil):
         ("Peso médio registrado", f"{dados['peso'].mean():.2f} kg"),
     ]
     return pd.DataFrame(linhas, columns=["Indicador", "Resultado"])
+
+
+def gerar_tabela_variacoes_peso(df_historico):
+    colunas = [
+        "Data da pesagem",
+        "Peso anterior (kg)",
+        "Peso registrado (kg)",
+        "Variação (kg)",
+        "Resultado",
+    ]
+    if len(df_historico) < 2:
+        return pd.DataFrame(columns=colunas)
+
+    dados = df_historico.copy()
+    dados['data_registo'] = pd.to_datetime(dados['data_registo'])
+    dados = dados.sort_values('data_registo').reset_index(drop=True)
+    pesos = dados['peso'].astype(float)
+    variacoes = pesos.diff()
+    pesos_anteriores = pesos.shift(1)
+    mascara = variacoes.notna()
+    tabela = pd.DataFrame({
+        "Data da pesagem": dados.loc[mascara, 'data_registo'].dt.strftime('%d/%m/%Y'),
+        "Peso anterior (kg)": pesos_anteriores.loc[mascara].map(
+            lambda valor: round(float(valor), 2)
+        ),
+        "Peso registrado (kg)": pesos.loc[mascara].map(
+            lambda valor: round(float(valor), 2)
+        ),
+        "Variação (kg)": variacoes.loc[mascara].map(
+            lambda valor: f"{valor:+.2f}"
+        ),
+        "Resultado": variacoes.loc[mascara].map(
+            lambda valor: "Perda" if valor < 0 else "Ganho" if valor > 0 else "Estável"
+        ),
+    })
+    return tabela.reset_index(drop=True)
 
 
 def exibir_estatisticas(df_historico, perfil):
@@ -914,6 +1263,24 @@ def exibir_estatisticas(df_historico, perfil):
         mime="text/csv",
         use_container_width=True,
     )
+    st.subheader("Datas e variações entre pesagens")
+    st.caption(
+        "Cada linha classifica a variação na data da pesagem registrada, "
+        "comparada à pesagem anterior. A primeira pesagem é apenas a referência; "
+        "peso igual é classificado como estável."
+    )
+    tabela_variacoes = gerar_tabela_variacoes_peso(df_historico)
+    if tabela_variacoes.empty:
+        st.info("São necessárias pelo menos duas pesagens para mostrar perda, ganho ou estabilidade.")
+    else:
+        st.dataframe(tabela_variacoes, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Baixar datas e variações em CSV",
+            tabela_variacoes.to_csv(index=False).encode('utf-8-sig'),
+            file_name="variacoes_peso.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
 
     peso_inicial = float(perfil['peso_inicial'])
     altura_m = perfil.get('altura_m')
@@ -1034,7 +1401,7 @@ def exibir_estatisticas(df_historico, perfil):
 
     st.subheader("Análise preditiva e histórico")
     if len(df_historico) > 3:
-        figura_predicao, _, _, _, erros_predicao = gerar_predicao_ml(
+        figura_predicao, _, _, _ = gerar_predicao_ml(
             df_historico,
             peso_inicial,
         )
@@ -1044,10 +1411,6 @@ def exibir_estatisticas(df_historico, perfil):
             "O treino é recalculado com as datas e os pesos de todo o histórico deste perfil. "
             "O registro de dose dispara a atualização, mas a dose não é variável do modelo. "
             "A projeção é estatística e não substitui orientação médica."
-        )
-        st.caption(
-            f"Erro médio histórico — Ridge: {erros_predicao['ridge']:.3f} kg | "
-            f"SVR: {erros_predicao['svr']:.3f} kg"
         )
     else:
         treino_realizado = False
@@ -1063,7 +1426,60 @@ def exibir_estatisticas(df_historico, perfil):
         st.info("Não há doses registradas no período selecionado.")
     else:
         st.pyplot(gerar_grafico_doses(dados), clear_figure=True)
-    avaliacao_matrizes = avaliar_matrizes_confusao_ml(df_historico)
+
+    st.subheader("Comparação dos modelos de previsão de peso")
+    avaliacao_regressoes = avaliar_regressores_ml(df_historico)
+    if avaliacao_regressoes is None:
+        st.info(
+            "São necessárias pelo menos seis pesagens para comparar os modelos "
+            "com validação cronológica."
+        )
+    else:
+        st.caption(
+            f"MAE e RMSE em kg, calculados em {avaliacao_regressoes['quantidade_avaliacoes']} "
+            "previsões futuras (walk-forward). Valores menores indicam menor erro. "
+            "A linha de persistência usa a última pesagem como previsão. Huber é "
+            "avaliado como candidato e não substitui o SVR automaticamente."
+        )
+        st.dataframe(
+            criar_tabela_metricas_regressao(avaliacao_regressoes),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    avaliacao_classificacao = avaliar_classificador_tendencia_ml(df_historico)
+    st.subheader("Classificação da tendência — LogisticRegression")
+    if avaliacao_classificacao is None:
+        st.info(
+            "A classificação aparecerá quando houver pelo menos seis pesagens "
+            "e diversidade suficiente de tendências no histórico de treino."
+        )
+    else:
+        resumo_classificacao, metricas_por_classe = (
+            criar_tabelas_metricas_classificacao(avaliacao_classificacao)
+        )
+        st.caption(
+            f"Validação cronológica com {avaliacao_classificacao['quantidade_avaliacoes']} "
+            "previsões. Precisão, recall e F1 são médias macro e também são detalhados "
+            "por classe. AUC-ROC é One-vs-Rest e só é exibida quando as três classes "
+            "têm observações positivas e negativas avaliadas, após aparecerem no treino. "
+            "A linha de baseline prevê a última tendência observada."
+        )
+        st.dataframe(
+            resumo_classificacao,
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.dataframe(
+            metricas_por_classe,
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.pyplot(
+            gerar_grafico_matriz_confusao(avaliacao_classificacao),
+            clear_figure=True,
+        )
+
     exibir_download_pdf(
         dados,
         "Estatísticas do tratamento com semaglutida",
@@ -1072,26 +1488,9 @@ def exibir_estatisticas(df_historico, perfil):
         peso_inicial=peso_inicial,
         altura_m=altura_m,
         df_historico_completo=df_historico,
-        avaliacao_matrizes=avaliacao_matrizes,
+        avaliacao_regressoes=avaliacao_regressoes,
+        avaliacao_classificacao=avaliacao_classificacao,
     )
-
-    st.subheader("Matriz de confusão — avaliação do ML")
-    if avaliacao_matrizes is None:
-        st.info(
-            "São necessárias pelo menos seis pesagens para o treino inicial de "
-            "quatro registros e duas previsões cronológicas de validação."
-        )
-    else:
-        st.caption(
-            f"Validação cronológica com {avaliacao_matrizes['quantidade_avaliacoes']} "
-            "previsões futuras. Linhas = classe real; colunas = classe prevista. "
-            "Variações entre -0,10 kg e +0,10 kg (inclusive) são classificadas como "
-            "estáveis. A avaliação usa todo o histórico, sem considerar o filtro de período."
-        )
-        st.pyplot(
-            gerar_grafico_matrizes_confusao(avaliacao_matrizes),
-            clear_figure=True,
-        )
 
 # --- 4. INTERFACE DO UTILIZADOR (FRONTEND) ---
 st.title("📉 Acompanhamento com IA - Semaglutida")
@@ -1223,7 +1622,10 @@ else:
 
     treino_realizado = False
     if len(df) > 3:
-        fig, peso_atual, perda_atual, projecoes, erros = gerar_predicao_ml(df, perfil['peso_inicial'])
+        fig, peso_atual, perda_atual, projecoes = gerar_predicao_ml(
+            df,
+            perfil['peso_inicial'],
+        )
         treino_realizado = True
         st.pyplot(fig)
 
@@ -1233,7 +1635,6 @@ else:
             "O treino é recalculado com as datas e os pesos deste perfil; doses "
             "registradas não são variáveis de entrada do modelo."
         )
-        st.caption(f"Erro médio histórico — Ridge: {erros['ridge']:.3f} kg | SVR: {erros['svr']:.3f} kg")
         col_met1, col_met2, col_met3, col_met4 = st.columns(4)
         col_met1.metric("Perda atual", f"{perda_atual:.1f}%", help=f"Peso atual: {peso_atual:.1f} kg")
         col_met1.caption(f"{perfil['peso_inicial'] - peso_atual:.1f} kg")

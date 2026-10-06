@@ -1,6 +1,6 @@
 # Semaglutida
 
-Aplicação Streamlit para acompanhar peso e registros de dose de semaglutida, com projeções estatísticas, evolução do IMC e um resumo descritivo do tratamento na seção Estatísticas.
+Aplicação Streamlit para acompanhar peso e registros de dose de semaglutida, com projeções estatísticas, evolução do IMC e um resumo descritivo do tratamento. Em Estatísticas, o histórico detalha por data as variações entre pesagens: perda, ganho ou peso igual.
 
 ## Requisitos
 
