@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from io import BytesIO
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.ticker import MultipleLocator
 from supabase import create_client
 from supabase.lib.client_options import SyncClientOptions
 from sklearn.linear_model import HuberRegressor, LogisticRegression, Ridge
@@ -342,6 +343,8 @@ def gerar_predicao_ml(df_historico, peso_inicial):
     ax.set_title("Evolução e projeção do peso")
     ax.set_ylabel("Peso (kg)")
     ax.set_xlabel("Data")
+    ax.yaxis.set_major_locator(MultipleLocator(0.5))
+    ax.set_axisbelow(True)
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     
