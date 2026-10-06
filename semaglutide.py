@@ -160,6 +160,39 @@ def guardar_registo(user_id, data_registo, peso, tomou, dose):
         )
         st.stop()
 
+    st.session_state["ml_retreino_pendente"] = {
+        "user_id": str(user_id),
+        "data_registro": str(data_registo),
+        "dose_registrada": bool(tomou),
+    }
+
+
+def exibir_status_retreino_ml(user_id, df_historico, treino_realizado):
+    pendente = st.session_state.get("ml_retreino_pendente")
+    if not pendente or pendente.get("user_id") != str(user_id):
+        return
+
+    if len(df_historico) <= 3:
+        st.info(
+            "Registro salvo. O retreino será feito quando este perfil tiver "
+            "pelo menos quatro pesagens."
+        )
+        return
+
+    if treino_realizado:
+        data_registro = pd.to_datetime(pendente["data_registro"]).strftime('%d/%m/%Y')
+        motivo = (
+            "registro de dose e peso"
+            if pendente["dose_registrada"]
+            else "atualização da pesagem"
+        )
+        st.success(
+            f"Modelo recalculado para este perfil após o {motivo} de {data_registro}, "
+            f"usando {len(df_historico)} registros de peso."
+        )
+        st.session_state.pop("ml_retreino_pendente", None)
+
+
 # --- 3. MOTOR DE INTELIGÊNCIA ARTIFICIAL ---
 def gerar_predicao_ml(df_historico, peso_inicial):
     df_historico = df_historico.copy().sort_values('data_registo')
@@ -861,20 +894,24 @@ def exibir_estatisticas(df_historico, perfil):
             df_historico,
             peso_inicial,
         )
+        treino_realizado = True
         st.pyplot(figura_predicao, clear_figure=True)
         st.caption(
-            "Esta análise utiliza todo o histórico, independentemente do filtro "
-            "de período. A projeção é estatística e não substitui orientação médica."
+            "O treino é recalculado com as datas e os pesos de todo o histórico deste perfil. "
+            "O registro de dose dispara a atualização, mas a dose não é variável do modelo. "
+            "A projeção é estatística e não substitui orientação médica."
         )
         st.caption(
             f"Erro médio histórico — Ridge: {erros_predicao['ridge']:.3f} kg | "
             f"SVR: {erros_predicao['svr']:.3f} kg"
         )
     else:
+        treino_realizado = False
         st.info(
             "São necessários pelo menos quatro registros de peso para exibir "
             "a análise preditiva."
         )
+    exibir_status_retreino_ml(perfil['id'], df_historico, treino_realizado)
 
     st.subheader("Doses no período")
     dados_doses = dados[dados['tomou_dose'] & (dados['quantidade_dose'] > 0)]
@@ -1020,12 +1057,18 @@ else:
     st.divider()
     st.subheader("🧠 Análise preditiva e histórico")
 
+    treino_realizado = False
     if len(df) > 3:
         fig, peso_atual, perda_atual, projecoes, erros = gerar_predicao_ml(df, perfil['peso_inicial'])
+        treino_realizado = True
         st.pyplot(fig)
 
         st.caption("Percentuais calculados em relação ao peso inicial informado no perfil.")
         st.caption("As projeções são estatísticas e não substituem orientação médica.")
+        st.caption(
+            "O treino é recalculado com as datas e os pesos deste perfil; doses "
+            "registradas não são variáveis de entrada do modelo."
+        )
         st.caption(f"Erro médio histórico — Ridge: {erros['ridge']:.3f} kg | SVR: {erros['svr']:.3f} kg")
         col_met1, col_met2, col_met3, col_met4 = st.columns(4)
         col_met1.metric("Perda atual", f"{perda_atual:.1f}%", help=f"Peso atual: {peso_atual:.1f} kg")
@@ -1053,6 +1096,8 @@ else:
             st.warning("🟠 Ritmo projetado lento (abaixo da referência clínica)")
     else:
         st.info("Continue registrando seu peso por mais alguns dias para a IA calcular uma curva personalizada.")
+
+    exibir_status_retreino_ml(perfil['id'], df, treino_realizado)
 
     st.divider()
     st.caption("Relatório completo")
