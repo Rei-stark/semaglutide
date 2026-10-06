@@ -29,6 +29,9 @@ CLASSES_VARIACAO_PESO = ("Perda", "Estável", "Ganho")
 LIMIAR_VARIACAO_PESO_KG = 0.1
 MIN_REGISTROS_TREINO_ML = 4
 MIN_REGISTROS_AVALIACAO_ML = 6
+HORIZONTES_TESTE_ML = (10, 20, 30)
+MIN_REGISTROS_TREINO_TESTE_ML = 6
+MAX_ORIGENS_TESTE_ML = 12
 
 # --- 1. CONFIGURAÇÃO DO SUPABASE ---
 try:
@@ -412,6 +415,304 @@ def avaliar_regressores_ml(df_historico):
         "baseline": calcular_erros(pesos_baseline),
         "quantidade_avaliacoes": len(pesos_reais),
     }
+
+
+def avaliar_modelos_horizontes_ml(df_historico):
+    if len(df_historico) <= MIN_REGISTROS_TREINO_TESTE_ML:
+        return {
+            "metricas": pd.DataFrame(),
+            "origens_avaliadas": 0,
+            "origens_testadas": 0,
+        }
+
+    try:
+        from prophet import Prophet
+    except ModuleNotFoundError as error:
+        if error.name != "prophet":
+            raise
+        raise RuntimeError(
+            "A dependência Prophet não está instalada. Instale as dependências "
+            "do projeto com `pip install -r requirements.txt`."
+        ) from error
+
+    dados = df_historico.copy().sort_values('data_registo').reset_index(drop=True)
+    dados['data_registo'] = pd.to_datetime(dados['data_registo'])
+    dados['peso'] = dados['peso'].astype(float)
+
+    indices_origem = list(range(MIN_REGISTROS_TREINO_TESTE_ML, len(dados)))
+    if len(indices_origem) > MAX_ORIGENS_TESTE_ML:
+        indices_origem = np.linspace(
+            indices_origem[0],
+            indices_origem[-1],
+            MAX_ORIGENS_TESTE_ML,
+            dtype=int,
+        ).tolist()
+
+    nomes_modelos = (
+        "Ridge",
+        "Huber",
+        "Prophet (tendência)",
+        "Persistência",
+        "Drift linear",
+    )
+    avaliacoes = {
+        horizonte: {
+            nome: {"reais": [], "previstos": [], "dias_reais": []}
+            for nome in nomes_modelos
+        }
+        for horizonte in HORIZONTES_TESTE_ML
+    }
+    origens_avaliadas = 0
+
+    for indice_origem in indices_origem:
+        treino = dados.iloc[:indice_origem]
+        futuras = dados.iloc[indice_origem:]
+        data_ultima = treino['data_registo'].iloc[-1]
+        datas_treino = treino['data_registo']
+        dias_treino = (datas_treino - datas_treino.iloc[0]).dt.days
+        pesos_treino = treino['peso'].to_numpy(dtype=float)
+
+        intervalo_mediano = datas_treino.diff().dt.days
+        intervalo_mediano = intervalo_mediano[intervalo_mediano > 0].median()
+        if pd.isna(intervalo_mediano) or intervalo_mediano <= 0:
+            intervalo_mediano = 7.0
+        tolerancia_dias = max(
+            2,
+            min(4, int(np.ceil(float(intervalo_mediano) / 2))),
+        )
+
+        datas_alvo = {
+            horizonte: data_ultima + pd.Timedelta(days=horizonte)
+            for horizonte in HORIZONTES_TESTE_ML
+        }
+        observacoes_reais = {}
+        for horizonte, data_alvo in datas_alvo.items():
+            desvios = (
+                futuras['data_registo'] - data_alvo
+            ).abs().dt.days.to_numpy()
+            indice_mais_proximo = int(np.argmin(desvios))
+            if desvios[indice_mais_proximo] <= tolerancia_dias:
+                linha_real = futuras.iloc[indice_mais_proximo]
+                observacoes_reais[horizonte] = (
+                    float(linha_real['peso']),
+                    int((linha_real['data_registo'] - data_ultima).days),
+                )
+
+        if not observacoes_reais:
+            continue
+
+        origens_avaliadas += 1
+        dias_alvo_modelo = pd.DataFrame({
+            'Dias_Tratamento': [
+                int((datas_alvo[horizonte] - datas_treino.iloc[0]).days)
+                for horizonte in HORIZONTES_TESTE_ML
+            ]
+        })
+        previsoes = {}
+        for nome, modelo in criar_modelos_regressao().items():
+            modelo.fit(
+                pd.DataFrame({'Dias_Tratamento': dias_treino}),
+                pesos_treino,
+            )
+            previsoes[nome] = modelo.predict(dias_alvo_modelo).astype(float)
+
+        modelo_prophet = Prophet(
+            growth="linear",
+            yearly_seasonality=False,
+            weekly_seasonality=False,
+            daily_seasonality=False,
+            n_changepoints=min(5, len(treino) - 1),
+            uncertainty_samples=0,
+        )
+        modelo_prophet.fit(pd.DataFrame({
+            'ds': datas_treino,
+            'y': pesos_treino,
+        }))
+        previsoes_prophet = modelo_prophet.predict(pd.DataFrame({
+            'ds': list(datas_alvo.values()),
+        }))['yhat'].to_numpy(dtype=float)
+        previsoes["Prophet (tendência)"] = previsoes_prophet
+
+        dias_a_frente = np.asarray(HORIZONTES_TESTE_ML, dtype=float)
+        previsoes["Persistência"] = np.full(
+            len(HORIZONTES_TESTE_ML),
+            pesos_treino[-1],
+        )
+        intervalo_treino = float(dias_treino.iloc[-1])
+        inclinacao_diaria = (
+            (pesos_treino[-1] - pesos_treino[0]) / intervalo_treino
+            if intervalo_treino > 0
+            else 0.0
+        )
+        previsoes["Drift linear"] = (
+            pesos_treino[-1] + inclinacao_diaria * dias_a_frente
+        )
+
+        for indice_horizonte, horizonte in enumerate(HORIZONTES_TESTE_ML):
+            if horizonte not in observacoes_reais:
+                continue
+            peso_real, dias_reais = observacoes_reais[horizonte]
+            for nome in nomes_modelos:
+                avaliacoes[horizonte][nome]["reais"].append(peso_real)
+                avaliacoes[horizonte][nome]["previstos"].append(
+                    float(previsoes[nome][indice_horizonte])
+                )
+                avaliacoes[horizonte][nome]["dias_reais"].append(dias_reais)
+
+    linhas_metricas = []
+    for horizonte in HORIZONTES_TESTE_ML:
+        for nome in nomes_modelos:
+            valores = avaliacoes[horizonte][nome]
+            if not valores["reais"]:
+                continue
+            linhas_metricas.append({
+                "Horizonte previsto (dias)": horizonte,
+                "Modelo": nome,
+                "MAE (kg)": float(mean_absolute_error(
+                    valores["reais"],
+                    valores["previstos"],
+                )),
+                "RMSE (kg)": float(np.sqrt(mean_squared_error(
+                    valores["reais"],
+                    valores["previstos"],
+                ))),
+                "Avaliações": len(valores["reais"]),
+                "Horizonte real médio (dias)": float(np.mean(valores["dias_reais"])),
+            })
+
+    return {
+        "metricas": pd.DataFrame(linhas_metricas),
+        "origens_avaliadas": origens_avaliadas,
+        "origens_testadas": len(indices_origem),
+    }
+
+
+def gerar_grafico_comparacao_horizontes_ml(metricas):
+    fig, eixo = plt.subplots(figsize=(10, 5))
+    for nome, dados_modelo in metricas.groupby("Modelo", sort=False):
+        erros_por_horizonte = dados_modelo.set_index(
+            "Horizonte previsto (dias)"
+        )["MAE (kg)"].reindex(HORIZONTES_TESTE_ML)
+        eixo.plot(
+            HORIZONTES_TESTE_ML,
+            erros_por_horizonte.to_numpy(dtype=float),
+            marker='o',
+            linewidth=2,
+            label=nome,
+        )
+    eixo.set_title("Erro médio absoluto por horizonte — validação cronológica")
+    eixo.set_xlabel("Horizonte previsto (dias)")
+    eixo.set_ylabel("MAE (kg)")
+    eixo.set_xticks(HORIZONTES_TESTE_ML)
+    eixo.grid(True, alpha=0.3)
+    eixo.legend()
+    fig.tight_layout()
+    return fig
+
+
+def exibir_testes_ml(df_historico, perfil):
+    st.header("🧪 Testes LM")
+    st.caption(
+        "Comparação experimental para este perfil: Ridge, Huber, Prophet sem "
+        "sazonalidade e dois baselines simples. Os resultados não alteram os "
+        "modelos usados nas projeções do acompanhamento."
+    )
+
+    if df_historico.empty:
+        st.info("Registre pesagens antes de executar a validação.")
+        return
+
+    dados = df_historico.copy().sort_values('data_registo').reset_index(drop=True)
+    dados['data_registo'] = pd.to_datetime(dados['data_registo'])
+    assinatura = (
+        str(perfil['id']),
+        tuple(dados['data_registo'].dt.strftime('%Y-%m-%d')),
+        tuple(dados['peso'].astype(float)),
+    )
+    quantidade_minima = MIN_REGISTROS_TREINO_TESTE_ML + 1
+    if len(dados) < quantidade_minima:
+        st.info(
+            f"São necessárias pelo menos {quantidade_minima} pesagens para treinar "
+            "com seis registros e avaliar ao menos uma pesagem futura."
+        )
+
+    if st.button(
+        "Executar validação cronológica",
+        type="primary",
+        disabled=len(dados) < quantidade_minima,
+        key=f"executar_testes_lm_{perfil['id']}",
+    ):
+        try:
+            with st.spinner(
+                "Treinando e avaliando Ridge, Huber, Prophet e baselines..."
+            ):
+                resultado = avaliar_modelos_horizontes_ml(dados)
+        except RuntimeError as error:
+            st.error(str(error))
+            return
+        st.session_state["testes_lm_resultado"] = {
+            "assinatura": assinatura,
+            "resultado": resultado,
+        }
+
+    estado = st.session_state.get("testes_lm_resultado")
+    if not estado or estado.get("assinatura") != assinatura:
+        st.info(
+            "Execute o teste para calcular os erros por horizonte usando o histórico "
+            "atual deste perfil."
+        )
+        return
+
+    resultado = estado["resultado"]
+    metricas = resultado["metricas"]
+    if metricas.empty:
+        st.warning(
+            "Não houve pesagens futuras suficientemente próximas dos horizontes de "
+            "10, 20 ou 30 dias. São necessárias observações distribuídas ao longo "
+            "do tempo para comparar esses prazos."
+        )
+        return
+
+    st.caption(
+        f"Validação rolling-origin: {resultado['origens_avaliadas']} origens com "
+        f"pesagens compatíveis, de {resultado['origens_testadas']} testadas. "
+        "Cada treino usa somente registros anteriores à previsão; a pesagem real "
+        "mais próxima é usada sem interpolação, com tolerância baseada no intervalo "
+        "mediano de registros (limitada a 2–4 dias). As origens podem se sobrepor, "
+        "portanto o teste é exploratório."
+    )
+    st.pyplot(
+        gerar_grafico_comparacao_horizontes_ml(metricas),
+        clear_figure=True,
+    )
+    metricas_exibicao = metricas.rename(columns={
+        "Horizonte previsto (dias)": "Horizonte (dias)",
+        "Horizonte real médio (dias)": "Horizonte observado médio (dias)",
+    }).round({
+        "MAE (kg)": 3,
+        "RMSE (kg)": 3,
+        "Horizonte observado médio (dias)": 1,
+    })
+    contagens = metricas.groupby(
+        "Horizonte previsto (dias)"
+    )["Avaliações"].first()
+    if (contagens < 5).any():
+        st.warning(
+            "Há horizontes com menos de cinco avaliações. Interprete os erros com "
+            "cautela; mais registros podem alterar a comparação."
+        )
+    st.dataframe(
+        metricas_exibicao,
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.caption(
+        "Persistência repete o último peso conhecido; Drift linear prolonga a "
+        "variação média diária do treino. Prophet usa apenas tendência, sem "
+        "sazonalidades. MAE e RMSE menores indicam menor erro nesta validação; "
+        "o tamanho e a quantidade de avaliações aparecem na tabela. Nenhum modelo "
+        "é substituído automaticamente."
+    )
 
 
 def avaliar_classificador_tendencia_ml(df_historico):
@@ -1645,7 +1946,10 @@ with st.sidebar:
         st.markdown(f"**Data de nascimento:** {nascimento_formatado}")
     else:
         st.caption("Perfil ainda não preenchido")
-    menu = st.radio("Menu", ["Acompanhamento", "Estatísticas", "Histórico"])
+    menu = st.radio(
+        "Menu",
+        ["Acompanhamento", "Estatísticas", "Testes LM", "Histórico"],
+    )
     st.caption("Desenvolvido por Reinaldo Galvão")
     if st.button("Sair", use_container_width=True):
         supabase.auth.sign_out()
@@ -1688,6 +1992,9 @@ else:
         st.stop()
     if menu == "Estatísticas":
         exibir_estatisticas(df, perfil)
+        st.stop()
+    if menu == "Testes LM":
+        exibir_testes_ml(df, perfil)
         st.stop()
 
     # --- ZONA DE REGISTO DIÁRIO ---
