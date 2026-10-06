@@ -320,9 +320,25 @@ def gerar_predicao_ml(df_historico, peso_inicial):
 
 
 def classificar_variacao_peso(variacao_kg):
-    if variacao_kg < -LIMIAR_VARIACAO_PESO_KG:
+    if (
+        variacao_kg < -LIMIAR_VARIACAO_PESO_KG
+        and not np.isclose(
+            variacao_kg,
+            -LIMIAR_VARIACAO_PESO_KG,
+            atol=1e-9,
+            rtol=0.0,
+        )
+    ):
         return "Perda"
-    if variacao_kg > LIMIAR_VARIACAO_PESO_KG:
+    if (
+        variacao_kg > LIMIAR_VARIACAO_PESO_KG
+        and not np.isclose(
+            variacao_kg,
+            LIMIAR_VARIACAO_PESO_KG,
+            atol=1e-9,
+            rtol=0.0,
+        )
+    ):
         return "Ganho"
     return "Estável"
 
@@ -895,7 +911,7 @@ def gerar_pdf_historico(
                         0.08,
                         0.89,
                         "Variação = peso registrado menos peso anterior; estável "
-                        "significa diferença igual a 0,00 kg.",
+                        "entre -0,10 kg e +0,10 kg, inclusive.",
                         fontsize=10,
                     )
                     tabela_pdf = ax.table(
@@ -1165,6 +1181,7 @@ def gerar_tabela_resumo_tratamento(df_historico, perfil):
     dados['data_registo'] = pd.to_datetime(dados['data_registo'])
     dados = dados.sort_values('data_registo').reset_index(drop=True)
     variacoes = dados['peso'].astype(float).diff().dropna()
+    classes_variacao = variacoes.map(classificar_variacao_peso)
 
     data_inicio = dados['data_registo'].iloc[0]
     data_fim = dados['data_registo'].iloc[-1]
@@ -1193,9 +1210,9 @@ def gerar_tabela_resumo_tratamento(df_historico, perfil):
         ("Perda de peso total", formatar_variacao(perda_total, "kg")),
         ("Perda média por dia", formatar_variacao(perda_media_diaria, "kg/dia", 3)),
         ("Variação desde o peso inicial", formatar_variacao(variacao_percentual, "%", 1)),
-        ("Intervalos com perda", str(int(variacoes.lt(0).sum()))),
-        ("Intervalos com ganho", str(int(variacoes.gt(0).sum()))),
-        ("Intervalos estáveis (peso igual)", str(int(variacoes.eq(0).sum()))),
+        ("Intervalos com perda", str(int(classes_variacao.eq("Perda").sum()))),
+        ("Intervalos com ganho", str(int(classes_variacao.eq("Ganho").sum()))),
+        ("Intervalos com peso estável", str(int(classes_variacao.eq("Estável").sum()))),
         ("Dias com dose registrada", str(int(dados['tomou_dose'].sum()))),
         (
             "Dose total registrada",
@@ -1233,11 +1250,9 @@ def gerar_tabela_variacoes_peso(df_historico):
             lambda valor: round(float(valor), 2)
         ),
         "Variação (kg)": variacoes.loc[mascara].map(
-            lambda valor: f"{valor:+.2f}"
+            lambda valor: f"{valor:+.3f}"
         ),
-        "Resultado": variacoes.loc[mascara].map(
-            lambda valor: "Perda" if valor < 0 else "Ganho" if valor > 0 else "Estável"
-        ),
+        "Resultado": variacoes.loc[mascara].map(classificar_variacao_peso),
     })
     return tabela.reset_index(drop=True)
 
@@ -1252,7 +1267,9 @@ def exibir_estatisticas(df_historico, perfil):
     st.caption(
         "Resumo descritivo, não é um diagnóstico clínico. Os dias contam da primeira "
         "à última pesagem registrada, inclusive; o número de registros conta as pesagens "
-        "nesse mesmo período. Perda e ganho comparam cada pesagem à anterior."
+        "nesse mesmo período. A variação compara cada pesagem à anterior: perda abaixo "
+        "de -0,10 kg, estável entre -0,10 kg e +0,10 kg (inclusive), e ganho acima "
+        "de +0,10 kg."
     )
     tabela_resumo = gerar_tabela_resumo_tratamento(df_historico, perfil)
     st.dataframe(tabela_resumo, use_container_width=True, hide_index=True)
@@ -1266,8 +1283,8 @@ def exibir_estatisticas(df_historico, perfil):
     st.subheader("Datas e variações entre pesagens")
     st.caption(
         "Cada linha classifica a variação na data da pesagem registrada, "
-        "comparada à pesagem anterior. A primeira pesagem é apenas a referência; "
-        "peso igual é classificado como estável."
+        "comparada à pesagem anterior. A primeira pesagem é apenas a referência. "
+        "Variações de -0,10 kg a +0,10 kg, inclusive, são estáveis."
     )
     tabela_variacoes = gerar_tabela_variacoes_peso(df_historico)
     if tabela_variacoes.empty:
