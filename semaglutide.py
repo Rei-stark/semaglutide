@@ -11,12 +11,17 @@ from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVR
-from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import confusion_matrix, mean_absolute_error
 from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 st.set_page_config(page_title="Acompanhamento de Semaglutida", page_icon="📉", layout="centered")
+
+CLASSES_VARIACAO_PESO = ("Perda", "Estável", "Ganho")
+LIMIAR_VARIACAO_PESO_KG = 0.1
+MIN_REGISTROS_TREINO_ML = 4
+MIN_REGISTROS_AVALIACAO_ML = 6
 
 # --- 1. CONFIGURAÇÃO DO SUPABASE ---
 try:
@@ -194,6 +199,19 @@ def exibir_status_retreino_ml(user_id, df_historico, treino_realizado):
 
 
 # --- 3. MOTOR DE INTELIGÊNCIA ARTIFICIAL ---
+def criar_modelos_regressao():
+    return {
+        "Ridge": make_pipeline(
+            PolynomialFeatures(degree=2),
+            Ridge(alpha=10.0),
+        ),
+        "SVR": make_pipeline(
+            StandardScaler(),
+            SVR(kernel='rbf', C=10.0, gamma='scale', epsilon=0.1),
+        ),
+    }
+
+
 def gerar_predicao_ml(df_historico, peso_inicial):
     df_historico = df_historico.copy().sort_values('data_registo')
     df_historico['data_registo'] = pd.to_datetime(df_historico['data_registo'])
@@ -202,12 +220,10 @@ def gerar_predicao_ml(df_historico, peso_inicial):
     
     X = df_historico[['Dias_Tratamento']]
     y = df_historico['peso']
-    
-    modelo_ridge = make_pipeline(PolynomialFeatures(degree=2), Ridge(alpha=10.0))
-    modelo_svr = make_pipeline(
-        StandardScaler(),
-        SVR(kernel='rbf', C=10.0, gamma='scale', epsilon=0.1),
-    )
+
+    modelos = criar_modelos_regressao()
+    modelo_ridge = modelos["Ridge"]
+    modelo_svr = modelos["SVR"]
     modelo_ridge.fit(X, y)
     modelo_svr.fit(X, y)
     
@@ -281,6 +297,97 @@ def gerar_predicao_ml(df_historico, peso_inicial):
         'svr': mean_absolute_error(y, modelo_svr.predict(X)),
     }
     return fig, peso_atual, perda_atual, projecoes, erros
+
+
+def classificar_variacao_peso(variacao_kg):
+    if variacao_kg < -LIMIAR_VARIACAO_PESO_KG:
+        return "Perda"
+    if variacao_kg > LIMIAR_VARIACAO_PESO_KG:
+        return "Ganho"
+    return "Estável"
+
+
+def avaliar_matrizes_confusao_ml(df_historico):
+    if len(df_historico) < MIN_REGISTROS_AVALIACAO_ML:
+        return None
+
+    dados = df_historico.copy().sort_values('data_registo')
+    dados['data_registo'] = pd.to_datetime(dados['data_registo'])
+    data_inicio = dados['data_registo'].iloc[0]
+    dados['Dias_Tratamento'] = (dados['data_registo'] - data_inicio).dt.days
+    X = dados[['Dias_Tratamento']]
+    y = dados['peso'].astype(float)
+
+    classes_reais = []
+    classes_previstas = {nome: [] for nome in ("Ridge", "SVR")}
+    for indice_teste in range(MIN_REGISTROS_TREINO_ML, len(dados)):
+        peso_anterior = float(y.iloc[indice_teste - 1])
+        peso_real = float(y.iloc[indice_teste])
+        classes_reais.append(
+            classificar_variacao_peso(peso_real - peso_anterior)
+        )
+
+        for nome_modelo, modelo in criar_modelos_regressao().items():
+            modelo.fit(X.iloc[:indice_teste], y.iloc[:indice_teste])
+            peso_previsto = float(
+                modelo.predict(X.iloc[[indice_teste]])[0]
+            )
+            classes_previstas[nome_modelo].append(
+                classificar_variacao_peso(peso_previsto - peso_anterior)
+            )
+
+    matrizes = {
+        nome_modelo: pd.DataFrame(
+            confusion_matrix(
+                classes_reais,
+                classes_modelo,
+                labels=CLASSES_VARIACAO_PESO,
+            ),
+            index=CLASSES_VARIACAO_PESO,
+            columns=CLASSES_VARIACAO_PESO,
+        )
+        for nome_modelo, classes_modelo in classes_previstas.items()
+    }
+    acuracias = {
+        nome_modelo: float(np.trace(matriz.to_numpy()) / len(classes_reais))
+        for nome_modelo, matriz in matrizes.items()
+    }
+    return {
+        "matrizes": matrizes,
+        "acuracias": acuracias,
+        "quantidade_avaliacoes": len(classes_reais),
+    }
+
+
+def gerar_grafico_matrizes_confusao(avaliacao):
+    fig, eixos = plt.subplots(1, 2, figsize=(10, 4.5))
+    for eixo, nome_modelo in zip(eixos, ("Ridge", "SVR")):
+        matriz = avaliacao["matrizes"][nome_modelo]
+        eixo.imshow(matriz.to_numpy(), cmap="Blues")
+        eixo.set_title(
+            f"{nome_modelo} — acurácia "
+            f"{avaliacao['acuracias'][nome_modelo]:.1%}"
+        )
+        eixo.set_xticks(range(len(CLASSES_VARIACAO_PESO)))
+        eixo.set_xticklabels(CLASSES_VARIACAO_PESO)
+        eixo.set_yticks(range(len(CLASSES_VARIACAO_PESO)))
+        eixo.set_yticklabels(CLASSES_VARIACAO_PESO)
+        eixo.set_xlabel("Classe prevista")
+        eixo.set_ylabel("Classe real")
+        for linha in range(len(CLASSES_VARIACAO_PESO)):
+            for coluna in range(len(CLASSES_VARIACAO_PESO)):
+                eixo.text(
+                    coluna,
+                    linha,
+                    str(int(matriz.iloc[linha, coluna])),
+                    ha="center",
+                    va="center",
+                    color="black",
+                )
+
+    fig.suptitle("Matriz de confusão — validação cronológica")
+    fig.tight_layout()
+    return fig
 
 
 def gerar_grafico_doses(df_historico):
@@ -454,6 +561,7 @@ def gerar_pdf_historico(
     peso_inicial=None,
     altura_m=None,
     df_historico_completo=None,
+    avaliacao_matrizes=None,
 ):
     dados = df_historico.copy()
     dados['data_registo'] = pd.to_datetime(dados['data_registo'])
@@ -614,6 +722,40 @@ def gerar_pdf_historico(
             if not dados_doses.empty:
                 figura_doses = gerar_grafico_doses(dados)
                 salvar_grafico_a4(pdf, figura_doses)
+
+            avaliacao_ml = (
+                avaliar_matrizes_confusao_ml(historico_completo)
+                if avaliacao_matrizes is None
+                else avaliacao_matrizes
+            )
+            if avaliacao_ml is not None:
+                figura_matrizes = gerar_grafico_matrizes_confusao(avaliacao_ml)
+                figura_matrizes.text(
+                    0.01,
+                    0.01,
+                    "Validação cronológica; estabilidade definida como variação de até ±0,10 kg.",
+                    fontsize=8,
+                )
+            else:
+                figura_matrizes, ax = plt.subplots(figsize=(10, 5))
+                ax.axis('off')
+                ax.text(
+                    0.5,
+                    0.6,
+                    "Matriz de confusão ainda indisponível",
+                    ha='center',
+                    fontsize=16,
+                    fontweight='bold',
+                )
+                ax.text(
+                    0.5,
+                    0.4,
+                    "São necessárias pelo menos seis pesagens para obter "
+                    "duas previsões fora do treino inicial.",
+                    ha='center',
+                    wrap=True,
+                )
+            salvar_grafico_a4(pdf, figura_matrizes)
         else:
             for inicio in range(0, len(tabela), 25):
                 pagina = tabela.iloc[inicio:inicio + 25]
@@ -643,6 +785,7 @@ def exibir_download_pdf(
     peso_inicial=None,
     altura_m=None,
     df_historico_completo=None,
+    avaliacao_matrizes=None,
 ):
     if not df_historico.empty:
         st.download_button(
@@ -655,6 +798,7 @@ def exibir_download_pdf(
                 peso_inicial,
                 altura_m,
                 df_historico_completo,
+                avaliacao_matrizes,
             ),
             file_name="relatorio_semaglutida.pdf",
             mime="application/pdf",
@@ -919,6 +1063,7 @@ def exibir_estatisticas(df_historico, perfil):
         st.info("Não há doses registradas no período selecionado.")
     else:
         st.pyplot(gerar_grafico_doses(dados), clear_figure=True)
+    avaliacao_matrizes = avaliar_matrizes_confusao_ml(df_historico)
     exibir_download_pdf(
         dados,
         "Estatísticas do tratamento com semaglutida",
@@ -927,7 +1072,26 @@ def exibir_estatisticas(df_historico, perfil):
         peso_inicial=peso_inicial,
         altura_m=altura_m,
         df_historico_completo=df_historico,
+        avaliacao_matrizes=avaliacao_matrizes,
     )
+
+    st.subheader("Matriz de confusão — avaliação do ML")
+    if avaliacao_matrizes is None:
+        st.info(
+            "São necessárias pelo menos seis pesagens para o treino inicial de "
+            "quatro registros e duas previsões cronológicas de validação."
+        )
+    else:
+        st.caption(
+            f"Validação cronológica com {avaliacao_matrizes['quantidade_avaliacoes']} "
+            "previsões futuras. Linhas = classe real; colunas = classe prevista. "
+            "Variações entre -0,10 kg e +0,10 kg (inclusive) são classificadas como "
+            "estáveis. A avaliação usa todo o histórico, sem considerar o filtro de período."
+        )
+        st.pyplot(
+            gerar_grafico_matrizes_confusao(avaliacao_matrizes),
+            clear_figure=True,
+        )
 
 # --- 4. INTERFACE DO UTILIZADOR (FRONTEND) ---
 st.title("📉 Acompanhamento com IA - Semaglutida")
