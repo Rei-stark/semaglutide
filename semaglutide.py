@@ -551,7 +551,7 @@ def exibir_relatorio(df_historico, perfil):
     exibir_download_pdf(dados_filtrados, "Histórico de semaglutida", perfil, tipo='historico')
 
 
-def gerar_tabela_diagnosticos(df_historico, perfil):
+def gerar_tabela_resumo_tratamento(df_historico, perfil):
     if df_historico.empty:
         return pd.DataFrame(columns=["Indicador", "Resultado"])
 
@@ -600,34 +600,27 @@ def gerar_tabela_diagnosticos(df_historico, perfil):
     return pd.DataFrame(linhas, columns=["Indicador", "Resultado"])
 
 
-def exibir_diagnosticos(df_historico, perfil):
-    st.header("🔎 Diagnósticos do acompanhamento")
-    st.caption(
-        "Resumo descritivo dos registros, não é um diagnóstico clínico. "
-        "A data inicial corresponde à primeira pesagem registrada; os dias "
-        "contam o período até a última pesagem, inclusive. Perda e ganho contam "
-        "cada pesagem posterior em comparação com a pesagem anterior."
-    )
-    if df_historico.empty:
-        st.info("Ainda não há pesagens registradas para gerar o resumo.")
-        return
-
-    tabela = gerar_tabela_diagnosticos(df_historico, perfil)
-    st.dataframe(tabela, use_container_width=True, hide_index=True)
-    st.download_button(
-        "Baixar resumo em CSV",
-        tabela.to_csv(index=False).encode('utf-8-sig'),
-        file_name="resumo_diagnosticos.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
-
-
 def exibir_estatisticas(df_historico, perfil):
     st.header("📊 Estatísticas")
     if df_historico.empty:
         st.info("Ainda não há dados suficientes para calcular estatísticas.")
         return
+
+    st.subheader("Resumo do tratamento")
+    st.caption(
+        "Resumo descritivo, não é um diagnóstico clínico. A data inicial corresponde "
+        "à primeira pesagem registrada; os dias contam o período até a última pesagem, "
+        "inclusive. Perda e ganho contam cada pesagem posterior em comparação com a anterior."
+    )
+    tabela_resumo = gerar_tabela_resumo_tratamento(df_historico, perfil)
+    st.dataframe(tabela_resumo, use_container_width=True, hide_index=True)
+    st.download_button(
+        "Baixar resumo do tratamento em CSV",
+        tabela_resumo.to_csv(index=False).encode('utf-8-sig'),
+        file_name="resumo_tratamento.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
 
     peso_inicial = float(perfil['peso_inicial'])
     altura_m = perfil.get('altura_m')
@@ -786,7 +779,7 @@ with st.sidebar:
         st.caption("Perfil ainda não preenchido")
     menu = st.radio(
         "Menu",
-        ["Acompanhamento", "Gráfico semanal", "Estatísticas", "Diagnósticos", "Histórico"],
+        ["Acompanhamento", "Gráfico semanal", "Estatísticas", "Histórico"],
     )
     st.caption("Desenvolvido por Reinaldo Galvão")
     if st.button("Sair", use_container_width=True):
@@ -828,9 +821,6 @@ else:
 
     if menu == "Histórico":
         exibir_relatorio(df, perfil)
-        st.stop()
-    if menu == "Diagnósticos":
-        exibir_diagnosticos(df, perfil)
         st.stop()
     if menu == "Estatísticas":
         exibir_estatisticas(df, perfil)
