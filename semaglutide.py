@@ -413,9 +413,25 @@ def filtrar_historico(df_historico, chave="periodo_relatorio"):
     return dados[dados['data_registo'].dt.date >= data_inicio]
 
 
-def gerar_pdf_historico(df_historico, titulo, perfil=None, tipo='historico', peso_inicial=None):
+def gerar_pdf_historico(
+    df_historico,
+    titulo,
+    perfil=None,
+    tipo='historico',
+    peso_inicial=None,
+    altura_m=None,
+    df_historico_completo=None,
+):
     dados = df_historico.copy()
     dados['data_registo'] = pd.to_datetime(dados['data_registo'])
+    historico_completo = (
+        df_historico
+        if df_historico_completo is None
+        else df_historico_completo
+    ).copy()
+    historico_completo['data_registo'] = pd.to_datetime(
+        historico_completo['data_registo']
+    )
     tabela = dados[['data_registo', 'peso', 'tomou_dose', 'quantidade_dose']].copy()
     tabela.columns = ['Data', 'Peso (kg)', 'Tomou dose', 'Dose (mg)']
     tabela['Data'] = tabela['Data'].dt.strftime('%d/%m/%Y')
@@ -464,6 +480,58 @@ def gerar_pdf_historico(df_historico, titulo, perfil=None, tipo='historico', pes
             figura, _, _, _, _ = gerar_predicao_ml(dados, peso_inicial)
             salvar_grafico_a4(pdf, figura)
         elif tipo == 'estatisticas':
+            tabela_resumo = gerar_tabela_resumo_tratamento(
+                historico_completo,
+                perfil,
+            )
+            if altura_m is not None:
+                dados_ordenados = historico_completo.sort_values('data_registo')
+                altura_m = float(altura_m)
+                tabela_imc = pd.DataFrame([
+                    ("IMC inicial", f"{calcular_imc(peso_inicial, altura_m):.1f}"),
+                    (
+                        "IMC médio",
+                        f"{calcular_imc(float(dados_ordenados['peso'].mean()), altura_m):.1f}",
+                    ),
+                    (
+                        "IMC atual",
+                        f"{calcular_imc(float(dados_ordenados['peso'].iloc[-1]), altura_m):.1f}",
+                    ),
+                ], columns=["Indicador", "Resultado"])
+                tabela_resumo = pd.concat(
+                    [tabela_resumo, tabela_imc],
+                    ignore_index=True,
+                )
+
+            fig, ax = plt.subplots(figsize=(11.69, 8.27))
+            ax.axis('off')
+            fig.text(
+                0.08,
+                0.93,
+                'Resumo do tratamento e IMC',
+                fontsize=18,
+                fontweight='bold',
+            )
+            fig.text(
+                0.08,
+                0.89,
+                'Resumo descritivo; dias contam o período registrado inclusive. '
+                'Perda/ganho contam cada pesagem posterior versus a anterior.',
+                fontsize=10,
+            )
+            tabela_pdf = ax.table(
+                cellText=tabela_resumo.values,
+                colLabels=tabela_resumo.columns,
+                loc='center',
+                cellLoc='left',
+                colWidths=[0.62, 0.38],
+                bbox=[0.05, 0.04, 0.90, 0.78],
+            )
+            tabela_pdf.auto_set_font_size(False)
+            tabela_pdf.set_fontsize(9)
+            tabela_pdf.scale(1, 1.2)
+            salvar_grafico_a4(pdf, fig)
+
             fig, ax = plt.subplots(figsize=(11.69, 8.27))
             fig.subplots_adjust(left=0.10, right=0.95, top=0.88, bottom=0.16)
             ax.plot(dados['data_registo'], dados['peso'], marker='o', color='#1f77b4', label='Peso registrado')
@@ -476,6 +544,25 @@ def gerar_pdf_historico(df_historico, titulo, perfil=None, tipo='historico', pes
             ax.legend()
             fig.autofmt_xdate()
             salvar_grafico_a4(pdf, fig)
+
+            semanal = filtrar_registros_semanais(historico_completo)
+            semanal_completo = filtrar_marcas_semanais_completas(semanal)
+            semanas_projecao = 4 if len(semanal_completo) > 1 else 0
+            figura_semanal = gerar_grafico_semanal(
+                semanal,
+                semanas_projecao=semanas_projecao,
+                df_semanal_completo=semanal_completo,
+            )
+            salvar_grafico_a4(pdf, figura_semanal)
+
+            if altura_m is not None:
+                figura_imc_semanal = gerar_grafico_semanal(
+                    semanal,
+                    semanas_projecao=semanas_projecao,
+                    df_semanal_completo=semanal_completo,
+                    altura_m=altura_m,
+                )
+                salvar_grafico_a4(pdf, figura_imc_semanal)
 
             dados_doses = dados[dados['tomou_dose'] & (dados['quantidade_dose'] > 0)]
             if not dados_doses.empty:
@@ -502,11 +589,27 @@ def gerar_pdf_historico(df_historico, titulo, perfil=None, tipo='historico', pes
     return arquivo.getvalue()
 
 
-def exibir_download_pdf(df_historico, titulo, perfil, tipo='historico', peso_inicial=None):
+def exibir_download_pdf(
+    df_historico,
+    titulo,
+    perfil,
+    tipo='historico',
+    peso_inicial=None,
+    altura_m=None,
+    df_historico_completo=None,
+):
     if not df_historico.empty:
         st.download_button(
             "Baixar relatório em PDF",
-            gerar_pdf_historico(df_historico, titulo, perfil, tipo, peso_inicial),
+            gerar_pdf_historico(
+                df_historico,
+                titulo,
+                perfil,
+                tipo,
+                peso_inicial,
+                altura_m,
+                df_historico_completo,
+            ),
             file_name="relatorio_semaglutida.pdf",
             mime="application/pdf",
             use_container_width=True,
@@ -745,7 +848,15 @@ def exibir_estatisticas(df_historico, perfil):
         st.info("Não há doses registradas no período selecionado.")
     else:
         st.pyplot(gerar_grafico_doses(dados), clear_figure=True)
-    exibir_download_pdf(dados, "Estatísticas do tratamento com semaglutida", perfil, tipo='estatisticas', peso_inicial=peso_inicial)
+    exibir_download_pdf(
+        dados,
+        "Estatísticas do tratamento com semaglutida",
+        perfil,
+        tipo='estatisticas',
+        peso_inicial=peso_inicial,
+        altura_m=altura_m,
+        df_historico_completo=df_historico,
+    )
 
 # --- 4. INTERFACE DO UTILIZADOR (FRONTEND) ---
 st.title("📉 Acompanhamento com IA - Semaglutida")
