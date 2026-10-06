@@ -236,10 +236,25 @@ def gerar_predicao_ml(df_historico, peso_inicial):
     
     ultimo_dia = df_historico['Dias_Tratamento'].max()
     dias_alvo = np.array([10, 20, 30])
+    intervalos_pesagem = df_historico['data_registo'].diff().dt.days
+    intervalo_mediano = intervalos_pesagem[intervalos_pesagem > 0].median()
+    if pd.isna(intervalo_mediano) or intervalo_mediano <= 0:
+        intervalo_mediano = 7.0
+
     dias_grafico = np.arange(ultimo_dia + 1, ultimo_dia + 31)
     datas_grafico = df_historico['data_registo'].max() + pd.to_timedelta(
         np.arange(1, 31), unit='D'
     )
+    margens_grafico = {
+        nome: margens_erro[nome] * np.sqrt(
+            1 + np.arange(1, 31) / intervalo_mediano
+        )
+        for nome in modelos
+    }
+    margens_alvo = {
+        nome: margens_erro[nome] * np.sqrt(1 + dias_alvo / intervalo_mediano)
+        for nome in modelos
+    }
     dias_grafico_df = pd.DataFrame({'Dias_Tratamento': dias_grafico})
     dias_alvo_df = pd.DataFrame({'Dias_Tratamento': ultimo_dia + dias_alvo})
     predicoes_grafico = {
@@ -258,23 +273,23 @@ def gerar_predicao_ml(df_historico, peso_inicial):
             'perda': float(
                 ((peso_inicial - predicoes_alvo["Ridge"][indice]) / peso_inicial) * 100
             ),
-            'margem_erro_ridge': margens_erro["Ridge"],
+            'margem_erro_ridge': float(margens_alvo["Ridge"][indice]),
             'limite_inferior_ridge': float(
-                predicoes_alvo["Ridge"][indice] - margens_erro["Ridge"]
+                predicoes_alvo["Ridge"][indice] - margens_alvo["Ridge"][indice]
             ),
             'limite_superior_ridge': float(
-                predicoes_alvo["Ridge"][indice] + margens_erro["Ridge"]
+                predicoes_alvo["Ridge"][indice] + margens_alvo["Ridge"][indice]
             ),
             'peso_huber': float(predicoes_alvo["Huber"][indice]),
             'perda_huber': float(
                 ((peso_inicial - predicoes_alvo["Huber"][indice]) / peso_inicial) * 100
             ),
-            'margem_erro_huber': margens_erro["Huber"],
+            'margem_erro_huber': float(margens_alvo["Huber"][indice]),
             'limite_inferior_huber': float(
-                predicoes_alvo["Huber"][indice] - margens_erro["Huber"]
+                predicoes_alvo["Huber"][indice] - margens_alvo["Huber"][indice]
             ),
             'limite_superior_huber': float(
-                predicoes_alvo["Huber"][indice] + margens_erro["Huber"]
+                predicoes_alvo["Huber"][indice] + margens_alvo["Huber"][indice]
             ),
         }
         for indice, dias in enumerate(dias_alvo)
@@ -310,11 +325,11 @@ def gerar_predicao_ml(df_historico, peso_inicial):
         )
         ax.fill_between(
             datas_grafico,
-            predicoes_grafico[nome] - margens_erro[nome],
-            predicoes_grafico[nome] + margens_erro[nome],
+            predicoes_grafico[nome] - margens_grafico[nome],
+            predicoes_grafico[nome] + margens_grafico[nome],
             color=cor,
             alpha=0.16,
-            label=f'{nome}: faixa ±RMSE residual',
+            label=f'{nome}: faixa de erro crescente',
         )
         ax.scatter(
             datas_alvo,
@@ -1008,8 +1023,8 @@ def gerar_pdf_historico(
                 figura_predicao.text(
                     0.5,
                     0.01,
-                    "Faixas sombreadas: ±RMSE residual do ajuste (referência visual; "
-                    "não são intervalos de confiança).\n"
+                    "Faixas sombreadas: ±RMSE residual escalado pelo horizonte "
+                    "(referência visual; não são intervalos de confiança).\n"
                     "Projeção estatística; não substitui orientação médica.",
                     ha="center",
                     fontsize=8,
@@ -1520,8 +1535,9 @@ def exibir_estatisticas(df_historico, perfil):
         st.caption(
             "O treino é recalculado com as datas e os pesos de todo o histórico deste perfil. "
             "O registro de dose dispara a atualização, mas a dose não é variável do modelo. "
-            "As faixas sombreadas mostram ±RMSE residual do ajuste histórico como referência "
-            "visual, não como intervalo de confiança. A projeção é estatística e não substitui "
+            "As faixas sombreadas aumentam com o horizonte: o RMSE residual é escalado pela "
+            "raiz do número estimado de intervalos de pesagem futuros. São uma referência "
+            "visual, não um intervalo de confiança. A projeção é estatística e não substitui "
             "orientação médica."
         )
     else:

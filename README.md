@@ -1,6 +1,6 @@
 # Semaglutida
 
-Aplicação Streamlit para acompanhar peso e registros de dose de semaglutida, com projeções estatísticas, evolução do IMC e um resumo descritivo do tratamento. Em Estatísticas, o histórico detalha por data as variações entre pesagens: perda (abaixo de -0,10 kg), estável (de -0,10 kg a +0,10 kg, inclusive) ou ganho (acima de +0,10 kg). O gráfico preditivo compara Ridge e Huber; as faixas sombreadas representam ±RMSE residual do ajuste histórico como referência visual, não como intervalos de confiança.
+Aplicação Streamlit para acompanhar peso e registros de dose de semaglutida, com projeções estatísticas, evolução do IMC e um resumo descritivo do tratamento. Em Estatísticas, o histórico detalha por data as variações entre pesagens: perda (abaixo de -0,10 kg), estável (de -0,10 kg a +0,10 kg, inclusive) ou ganho (acima de +0,10 kg). O gráfico preditivo compara Ridge e Huber; as faixas sombreadas aumentam com o horizonte usando ±RMSE residual × √(1 + dias projetados / intervalo mediano entre pesagens). São uma referência visual, não intervalos de confiança.
 
 ## Requisitos
 
