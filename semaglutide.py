@@ -10,7 +10,6 @@ from sklearn.linear_model import HuberRegressor, LogisticRegression, Ridge
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVR
 from sklearn.metrics import (
     accuracy_score,
     confusion_matrix,
@@ -212,10 +211,6 @@ def criar_modelos_regressao():
             PolynomialFeatures(degree=2),
             Ridge(alpha=10.0),
         ),
-        "SVR": make_pipeline(
-            StandardScaler(),
-            SVR(kernel='rbf', C=10.0, gamma='scale', epsilon=0.1),
-        ),
         "Huber": make_pipeline(
             StandardScaler(),
             HuberRegressor(),
@@ -233,8 +228,11 @@ def gerar_predicao_ml(df_historico, peso_inicial):
     y = df_historico['peso']
 
     modelos = criar_modelos_regressao()
-    for modelo in modelos.values():
+    margens_erro = {}
+    for nome, modelo in modelos.items():
         modelo.fit(X, y)
+        residuos = y.to_numpy(dtype=float) - modelo.predict(X)
+        margens_erro[nome] = float(np.sqrt(np.mean(np.square(residuos))))
     
     ultimo_dia = df_historico['Dias_Tratamento'].max()
     dias_alvo = np.array([10, 20, 30])
@@ -260,16 +258,24 @@ def gerar_predicao_ml(df_historico, peso_inicial):
             'perda': float(
                 ((peso_inicial - predicoes_alvo["Ridge"][indice]) / peso_inicial) * 100
             ),
-            **{
-                f'peso_{nome.lower()}': float(predicoes_alvo[nome][indice])
-                for nome in ("SVR", "Huber")
-            },
-            **{
-                f'perda_{nome.lower()}': float(
-                    ((peso_inicial - predicoes_alvo[nome][indice]) / peso_inicial) * 100
-                )
-                for nome in ("SVR", "Huber")
-            },
+            'margem_erro_ridge': margens_erro["Ridge"],
+            'limite_inferior_ridge': float(
+                predicoes_alvo["Ridge"][indice] - margens_erro["Ridge"]
+            ),
+            'limite_superior_ridge': float(
+                predicoes_alvo["Ridge"][indice] + margens_erro["Ridge"]
+            ),
+            'peso_huber': float(predicoes_alvo["Huber"][indice]),
+            'perda_huber': float(
+                ((peso_inicial - predicoes_alvo["Huber"][indice]) / peso_inicial) * 100
+            ),
+            'margem_erro_huber': margens_erro["Huber"],
+            'limite_inferior_huber': float(
+                predicoes_alvo["Huber"][indice] - margens_erro["Huber"]
+            ),
+            'limite_superior_huber': float(
+                predicoes_alvo["Huber"][indice] + margens_erro["Huber"]
+            ),
         }
         for indice, dias in enumerate(dias_alvo)
     }
@@ -279,8 +285,7 @@ def gerar_predicao_ml(df_historico, peso_inicial):
     ax.scatter(df_historico['data_registo'], y, color='black', label='Peso real', zorder=5)
     estilos_modelos = {
         "Ridge": ("blue", "Ridge polinomial"),
-        "SVR": ("green", "SVR (RBF)"),
-        "Huber": ("#d97706", "Huber (candidato)"),
+        "Huber": ("#d97706", "Huber"),
     }
     datas_alvo = df_historico['data_registo'].max() + pd.to_timedelta(
         dias_alvo,
@@ -303,17 +308,26 @@ def gerar_predicao_ml(df_historico, peso_inicial):
             linestyle='--',
             linewidth=2,
         )
+        ax.fill_between(
+            datas_grafico,
+            predicoes_grafico[nome] - margens_erro[nome],
+            predicoes_grafico[nome] + margens_erro[nome],
+            color=cor,
+            alpha=0.16,
+            label=f'{nome}: faixa ±RMSE residual',
+        )
         ax.scatter(
             datas_alvo,
             predicoes_alvo[nome],
             color=cor,
             zorder=5,
-            label=f'{nome}: pontos de 10, 20 e 30 dias',
+            label=f'{nome}: projeções em 10, 20 e 30 dias',
         )
     
     ax.set_title("Evolução e projeção do peso")
     ax.set_ylabel("Peso (kg)")
-    ax.legend()
+    ax.set_xlabel("Data")
+    ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     
     return fig, peso_atual, perda_atual, projecoes
@@ -532,7 +546,7 @@ def gerar_grafico_matriz_confusao(avaliacao):
 def gerar_grafico_metricas_regressao(avaliacao):
     linhas = [
         [
-            "Huber (candidato)" if nome == "Huber" else nome,
+            nome,
             f"{metricas['mae']:.3f} kg",
             f"{metricas['rmse']:.3f} kg",
         ]
@@ -564,7 +578,7 @@ def gerar_grafico_metricas_regressao(avaliacao):
 def criar_tabela_metricas_regressao(avaliacao):
     linhas = [
         {
-            "Modelo": "Huber (candidato)" if nome == "Huber" else nome,
+            "Modelo": nome,
             "MAE (kg)": round(metricas["mae"], 3),
             "RMSE (kg)": round(metricas["rmse"], 3),
         }
@@ -992,9 +1006,12 @@ def gerar_pdf_historico(
                     peso_inicial,
                 )
                 figura_predicao.text(
-                    0.02,
+                    0.5,
                     0.01,
+                    "Faixas sombreadas: ±RMSE residual do ajuste (referência visual; "
+                    "não são intervalos de confiança).\n"
                     "Projeção estatística; não substitui orientação médica.",
+                    ha="center",
                     fontsize=8,
                 )
                 salvar_grafico_a4(pdf, figura_predicao)
@@ -1503,7 +1520,9 @@ def exibir_estatisticas(df_historico, perfil):
         st.caption(
             "O treino é recalculado com as datas e os pesos de todo o histórico deste perfil. "
             "O registro de dose dispara a atualização, mas a dose não é variável do modelo. "
-            "A projeção é estatística e não substitui orientação médica."
+            "As faixas sombreadas mostram ±RMSE residual do ajuste histórico como referência "
+            "visual, não como intervalo de confiança. A projeção é estatística e não substitui "
+            "orientação médica."
         )
     else:
         treino_realizado = False
@@ -1531,8 +1550,8 @@ def exibir_estatisticas(df_historico, perfil):
         st.caption(
             f"MAE e RMSE em kg, calculados em {avaliacao_regressoes['quantidade_avaliacoes']} "
             "previsões futuras (walk-forward). Valores menores indicam menor erro. "
-            "A linha de persistência usa a última pesagem como previsão. Huber é "
-            "avaliado como candidato e não substitui o SVR automaticamente."
+            "A linha de persistência usa a última pesagem como previsão; Ridge e Huber "
+            "são comparados com essa referência."
         )
         st.dataframe(
             criar_tabela_metricas_regressao(avaliacao_regressoes),
