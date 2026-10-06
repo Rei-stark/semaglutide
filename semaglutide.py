@@ -747,14 +747,6 @@ def exibir_estatisticas(df_historico, perfil):
         st.pyplot(gerar_grafico_doses(dados), clear_figure=True)
     exibir_download_pdf(dados, "Estatísticas do tratamento com semaglutida", perfil, tipo='estatisticas', peso_inicial=peso_inicial)
 
-    with st.expander("Sugestões para novas estatísticas"):
-        st.markdown(
-            "- **Circunferência abdominal:** acompanhar mudanças além do peso e do IMC.\n"
-            "- **Adesão às doses:** visualizar doses previstas e registradas por mês.\n"
-            "- **Ritmo e estabilidade:** mostrar variação semanal/mensal e identificar platôs.\n"
-            "- **Marcos de progresso:** registrar metas pessoais e a evolução até cada marco."
-        )
-
 # --- 4. INTERFACE DO UTILIZADOR (FRONTEND) ---
 st.title("📉 Acompanhamento com IA - Semaglutida")
 
@@ -777,10 +769,7 @@ with st.sidebar:
         st.markdown(f"**Data de nascimento:** {nascimento_formatado}")
     else:
         st.caption("Perfil ainda não preenchido")
-    menu = st.radio(
-        "Menu",
-        ["Acompanhamento", "Gráfico semanal", "Estatísticas", "Histórico"],
-    )
+    menu = st.radio("Menu", ["Acompanhamento", "Estatísticas", "Histórico"])
     st.caption("Desenvolvido por Reinaldo Galvão")
     if st.button("Sair", use_container_width=True):
         supabase.auth.sign_out()
@@ -814,8 +803,7 @@ if not perfil:
             st.success("Perfil criado com sucesso.")
             st.rerun()
 else:
-    if menu != "Gráfico semanal":
-        st.success(f"Olá, {perfil['nome']}! Bem-vindo de volta.")
+    st.success(f"Olá, {perfil['nome']}! Bem-vindo de volta.")
 
     df = obter_historico(perfil['id'])
 
@@ -824,29 +812,6 @@ else:
         st.stop()
     if menu == "Estatísticas":
         exibir_estatisticas(df, perfil)
-        st.stop()
-    if menu == "Gráfico semanal":
-        df_semanal = filtrar_registros_semanais(df)
-        if not df_semanal.empty:
-            st.pyplot(gerar_grafico_semanal(df_semanal), clear_figure=True)
-            df_semanal_completo = filtrar_marcas_semanais_completas(df_semanal)
-            if len(df_semanal_completo) > 1:
-                st.pyplot(
-                    gerar_grafico_semanal(
-                        df_semanal,
-                        semanas_projecao=4,
-                        df_semanal_completo=df_semanal_completo,
-                    ),
-                    clear_figure=True,
-                )
-            else:
-                st.info("São necessárias pelo menos duas semanas completas para calcular a projeção linear.")
-
-        df_doses = df[df['tomou_dose'] & (df['quantidade_dose'] > 0)]
-        if not df_doses.empty:
-            st.pyplot(gerar_grafico_doses(df), clear_figure=True)
-        if df_semanal.empty and df_doses.empty:
-            st.info("Ainda não há registros para exibir nos gráficos.")
         st.stop()
 
     # --- ZONA DE REGISTO DIÁRIO ---
