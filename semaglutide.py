@@ -515,8 +515,8 @@ def gerar_pdf_historico(
             fig.text(
                 0.08,
                 0.89,
-                'Resumo descritivo; dias contam o período registrado inclusive. '
-                'Perda/ganho contam cada pesagem posterior versus a anterior.',
+                'Dias contam da primeira à última pesagem, inclusive; registros de peso '
+                'contam as pesagens nesse mesmo período.',
                 fontsize=10,
             )
             tabela_pdf = ax.table(
@@ -563,6 +563,19 @@ def gerar_pdf_historico(
                     altura_m=altura_m,
                 )
                 salvar_grafico_a4(pdf, figura_imc_semanal)
+
+            if len(historico_completo) > 3:
+                figura_predicao, _, _, _, _ = gerar_predicao_ml(
+                    historico_completo,
+                    peso_inicial,
+                )
+                figura_predicao.text(
+                    0.02,
+                    0.01,
+                    "Projeção estatística; não substitui orientação médica.",
+                    fontsize=8,
+                )
+                salvar_grafico_a4(pdf, figura_predicao)
 
             dados_doses = dados[dados['tomou_dose'] & (dados['quantidade_dose'] > 0)]
             if not dados_doses.empty:
@@ -683,7 +696,8 @@ def gerar_tabela_resumo_tratamento(df_historico, perfil):
     linhas = [
         ("Data de início (primeira pesagem registrada)", data_inicio.strftime('%d/%m/%Y')),
         ("Data da última pesagem", data_fim.strftime('%d/%m/%Y')),
-        ("Dias em tratamento no período registrado", str(dias_em_tratamento)),
+        ("Número de dias em tratamento (período registrado)", str(dias_em_tratamento)),
+        ("Número de registros de peso no período do tratamento", str(len(dados))),
         ("Peso inicial do perfil", f"{peso_inicial:.2f} kg"),
         ("Peso da última pesagem", f"{peso_atual:.2f} kg"),
         ("Perda de peso total", formatar_variacao(perda_total, "kg")),
@@ -692,7 +706,6 @@ def gerar_tabela_resumo_tratamento(df_historico, perfil):
         ("Dias com perda entre pesagens", str(int(variacoes.lt(0).sum()))),
         ("Dias com ganho entre pesagens", str(int(variacoes.gt(0).sum()))),
         ("Pesagens sem alteração", str(int(variacoes.eq(0).sum()))),
-        ("Pesagens registradas", str(len(dados))),
         ("Dias com dose registrada", str(int(dados['tomou_dose'].sum()))),
         (
             "Dose total registrada",
@@ -711,9 +724,9 @@ def exibir_estatisticas(df_historico, perfil):
 
     st.subheader("Resumo do tratamento")
     st.caption(
-        "Resumo descritivo, não é um diagnóstico clínico. A data inicial corresponde "
-        "à primeira pesagem registrada; os dias contam o período até a última pesagem, "
-        "inclusive. Perda e ganho contam cada pesagem posterior em comparação com a anterior."
+        "Resumo descritivo, não é um diagnóstico clínico. Os dias contam da primeira "
+        "à última pesagem registrada, inclusive; o número de registros conta as pesagens "
+        "nesse mesmo período. Perda e ganho comparam cada pesagem à anterior."
     )
     tabela_resumo = gerar_tabela_resumo_tratamento(df_historico, perfil)
     st.dataframe(tabela_resumo, use_container_width=True, hide_index=True)
@@ -840,6 +853,27 @@ def exibir_estatisticas(df_historico, perfil):
         st.caption(
             "A previsão prolonga linearmente a tendência semanal observada; "
             "não é uma previsão clínica nem considera mudanças futuras."
+        )
+
+    st.subheader("Análise preditiva e histórico")
+    if len(df_historico) > 3:
+        figura_predicao, _, _, _, erros_predicao = gerar_predicao_ml(
+            df_historico,
+            peso_inicial,
+        )
+        st.pyplot(figura_predicao, clear_figure=True)
+        st.caption(
+            "Esta análise utiliza todo o histórico, independentemente do filtro "
+            "de período. A projeção é estatística e não substitui orientação médica."
+        )
+        st.caption(
+            f"Erro médio histórico — Ridge: {erros_predicao['ridge']:.3f} kg | "
+            f"SVR: {erros_predicao['svr']:.3f} kg"
+        )
+    else:
+        st.info(
+            "São necessários pelo menos quatro registros de peso para exibir "
+            "a análise preditiva."
         )
 
     st.subheader("Doses no período")
